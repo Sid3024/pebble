@@ -1,4 +1,7 @@
 import asyncio
+from config.config import Config
+from volume.volume import build_volume_backend, RateLimitedVolume
+from effort.controller import VolumeController
 from ble.scanner import scan_for_pebbles
 from ble.client import PebbleClient
 
@@ -6,6 +9,11 @@ SCAN_TIMEOUT = 10.0  # seconds
 
 
 async def main():
+    config = Config()
+    backend = build_volume_backend()
+    volume = RateLimitedVolume(backend)
+    controller = VolumeController(config, volume)
+
     print(f"[HUB] Scanning for Pebble devices ({SCAN_TIMEOUT}s)...")
     devices = await scan_for_pebbles(timeout=SCAN_TIMEOUT)
 
@@ -15,8 +23,7 @@ async def main():
 
     print(f"[HUB] Found {len(devices)}: {[d.name for d in devices]}")
 
-    # Connect to all devices concurrently.
-    clients = [PebbleClient(d) for d in devices]
+    clients = [PebbleClient(d, controller) for d in devices]
     await asyncio.gather(*[c.run() for c in clients])
 
 
