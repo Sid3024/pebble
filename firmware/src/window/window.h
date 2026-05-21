@@ -12,7 +12,7 @@
  */
 
 #define SAMPLE_RATE_HZ      100
-#define WINDOW_DURATION_S   5
+#define WINDOW_DURATION_S   3
 #define SAMPLES_PER_WINDOW  (SAMPLE_RATE_HZ * WINDOW_DURATION_S)  // 500
 
 // How many completed windows to keep before the oldest is overwritten.

@@ -2,10 +2,12 @@
 #include <Wire.h>
 #include "accel/accel.h"
 #include "window/window.h"
+#include "ble/ble.h"
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial) delay(10);  // wait for USB CDC on XIAO
+    // Wait up to 2s for USB CDC — skipped automatically on battery power.
+    while (!Serial && millis() < 2000) delay(10);
 
     Wire.begin();
 
@@ -14,16 +16,18 @@ void setup() {
         while (true) delay(1000);
     }
 
+    ble_init();
     window_task_start();
+
     Serial.printf("[INFO] Sampling at %d Hz, window = %d s (%d samples)\n",
                   SAMPLE_RATE_HZ, WINDOW_DURATION_S, SAMPLES_PER_WINDOW);
 }
 
 void loop() {
-    // Drain any completed windows and print them.
     float sum;
     while (window_pop(sum)) {
-        Serial.printf("[WINDOW] magnitude sum = %.4f g\n", sum);
+        Serial.printf("[WINDOW] sum = %.4f g  connected=%d\n", sum, ble_connected());
+        ble_send_window(sum);
     }
     delay(100);
 }
