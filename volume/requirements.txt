@@ -1,0 +1,4 @@
+pyserial>=3.5
+
+# Required on Windows for changing the computer's real system volume.
+pycaw>=20240210
