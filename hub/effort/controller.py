@@ -70,7 +70,8 @@ class VolumeController:
 
         exp_str = f"{exp:.2f}" if exp is not None else "n/a"
         if delta != 0:
-            self._current = clamp_percent(self._current + delta)
+            self._current = max(self._config.min_volume,
+                                min(self._config.max_volume, self._current + delta))
             self._volume.set_volume(self._current)
             arrow = "↑" if delta > 0 else "↓"
             print(f"[{device_name}] score={window_sum:.2f}  exp={exp_str}  "
