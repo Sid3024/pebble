@@ -18,6 +18,6 @@ class Config:
     decrease_alpha: int = 20
 
     # --- Volume limits ---
-    initial_volume: int = 50
+    initial_volume: int = 10
     min_volume: int = 10
     max_volume: int = 90
