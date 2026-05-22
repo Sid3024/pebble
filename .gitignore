@@ -11,3 +11,7 @@
 GEMINI.md
 
 hub/venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
