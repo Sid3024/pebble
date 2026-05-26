@@ -14,8 +14,8 @@ class Config:
     decrease_margin: float = 0.05
 
     # Volume delta (percentage points) applied on each qualifying window.
-    increase_alpha: int = 20
-    decrease_alpha: int = 20
+    increase_alpha: int = 10
+    decrease_alpha: int = 10
 
     # --- Volume limits ---
     initial_volume: int = 10

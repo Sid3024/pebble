@@ -1,0 +1,4 @@
+bleak>=0.21
+websockets>=12.0
+pycaw>=20220416
+comtypes>=1.4
