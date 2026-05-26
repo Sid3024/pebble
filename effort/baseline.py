@@ -3,7 +3,7 @@ from __future__ import annotations
 
 class BaselineCalculator:
     """
-    Accumulates the first n window sums for a person and computes their mean.
+    Accumulates the first n window sums for a device and computes their mean.
     Once ready, further values are ignored — the baseline is fixed.
     """
 
@@ -23,16 +23,11 @@ class BaselineCalculator:
         return len(self._values)
 
     def baseline(self) -> float | None:
-        """Mean of collected samples, or None if not enough data yet."""
         if not self.is_ready():
             return None
         return sum(self._values) / len(self._values)
 
 
 def expected_effort(calc: BaselineCalculator) -> float | None:
-    """
-    Return the expected effort level for a person.
-    Currently equals the baseline average.
-    Replace the body of this function to use a more sophisticated model.
-    """
+    """Expected effort level for a device — currently the baseline mean."""
     return calc.baseline()

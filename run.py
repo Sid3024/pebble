@@ -1,0 +1,154 @@
+"""
+Pebble launcher — run from the pebble/ root with the venv active.
+
+    python run.py flower        # flower game only
+    python run.py hub           # volume game only
+    python run.py both          # both simultaneously (one BLE connection per pod)
+    python run.py flower --simulate
+    python run.py both   --simulate --sim-pods 4
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+
+
+# ── Multi-controller fan-out ──────────────────────────────────────────────────
+
+class MultiController:
+    """Forwards every window to multiple game controllers."""
+
+    def __init__(self, *controllers) -> None:
+        self._controllers = controllers
+
+    def process_window(self, device_name: str, window_sum: float) -> None:
+        for ctrl in self._controllers:
+            ctrl.process_window(device_name, window_sum)
+
+
+# ── BLE helpers ───────────────────────────────────────────────────────────────
+
+async def _connect_ble(controller, scan_timeout: float) -> None:
+    from ble.scanner import scan_for_pebbles
+    from ble.client import PebbleClient
+
+    print(f"[BLE] Scanning for Pebble pods ({scan_timeout}s)...")
+    devices = await scan_for_pebbles(timeout=scan_timeout)
+
+    if not devices:
+        print("[BLE] No pods found.")
+        return
+
+    print(f"[BLE] Found {len(devices)}: {[d.name for d in devices]}")
+    clients = [PebbleClient(d, controller) for d in devices]
+    await asyncio.gather(*[c.run() for c in clients])
+
+
+async def _simulate_ble(controller, num_pods: int) -> None:
+    from FlowerGame.simulator import run_simulated_pods
+    await run_simulated_pods(controller, num_pods=num_pods)
+
+
+# ── Game builders ─────────────────────────────────────────────────────────────
+
+def _build_flower():
+    from FlowerGame.config.config import FlowerConfig
+    from FlowerGame.engine.controller import FlowerController
+    from FlowerGame.ws.server import FlowerWSServer
+
+    config = FlowerConfig()
+    controller = FlowerController(config)
+    server = FlowerWSServer(controller, config)
+    return controller, server.run(), config
+
+
+def _build_hub():
+    from hub.config.config import Config
+    from hub.volume.volume import build_volume_backend, RateLimitedVolume
+    from hub.effort.controller import VolumeController
+
+    config = Config()
+    backend = build_volume_backend()
+    volume = RateLimitedVolume(backend)
+    controller = VolumeController(config, volume)
+    return controller
+
+
+# ── Mode runners ──────────────────────────────────────────────────────────────
+
+async def run_flower(simulate: bool, sim_pods: int) -> None:
+    controller, ws_coro, config = _build_flower()
+
+    ble_coro = (
+        _simulate_ble(controller, sim_pods)
+        if simulate
+        else _connect_ble(controller, config.ble_scan_timeout)
+    )
+
+    print("  Open GameDashboard/index.html in your browser, then click Start.")
+    await asyncio.gather(ws_coro, ble_coro)
+
+
+async def run_hub(simulate: bool, sim_pods: int) -> None:
+    controller = _build_hub()
+
+    if simulate:
+        await _simulate_ble(controller, sim_pods)
+    else:
+        await _connect_ble(controller, scan_timeout=10.0)
+
+
+async def run_both(simulate: bool, sim_pods: int) -> None:
+    flower_ctrl, ws_coro, flower_cfg = _build_flower()
+    hub_ctrl = _build_hub()
+
+    multi = MultiController(flower_ctrl, hub_ctrl)
+
+    ble_coro = (
+        _simulate_ble(multi, sim_pods)
+        if simulate
+        else _connect_ble(multi, flower_cfg.ble_scan_timeout)
+    )
+
+    print("  Open GameDashboard/index.html in your browser.")
+    print("  Music volume + flowers both respond to pod movement.")
+    await asyncio.gather(ws_coro, ble_coro)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Pebble launcher.")
+    parser.add_argument(
+        "mode",
+        choices=["flower", "hub", "both"],
+        help="Which game(s) to run.",
+    )
+    parser.add_argument(
+        "--simulate", action="store_true",
+        help="Run without hardware (simulated pods).",
+    )
+    parser.add_argument(
+        "--sim-pods", type=int, default=3, metavar="N",
+        help="Number of simulated pods (default: 3).",
+    )
+    args = parser.parse_args()
+
+    runners = {
+        "flower": run_flower,
+        "hub":    run_hub,
+        "both":   run_both,
+    }
+
+    print("=" * 55)
+    print(f"  Pebble — mode: {args.mode}")
+    print("=" * 55)
+
+    try:
+        asyncio.run(runners[args.mode](args.simulate, args.sim_pods))
+    except KeyboardInterrupt:
+        print("\nStopped.")
+
+
+if __name__ == "__main__":
+    main()

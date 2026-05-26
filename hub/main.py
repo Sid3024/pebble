@@ -1,7 +1,8 @@
 import asyncio
-from config.config import Config
-from volume.volume import build_volume_backend, RateLimitedVolume
-from effort.controller import VolumeController
+
+from hub.config.config import Config
+from hub.volume.volume import build_volume_backend, RateLimitedVolume
+from hub.effort.controller import VolumeController
 from ble.scanner import scan_for_pebbles
 from ble.client import PebbleClient
 

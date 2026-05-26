@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from config.config import Config
-from volume.volume import RateLimitedVolume, clamp_percent
+from hub.config.config import Config
+from hub.volume.volume import RateLimitedVolume, clamp_percent
 from effort.baseline import BaselineCalculator, expected_effort
 
 

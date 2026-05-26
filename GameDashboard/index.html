@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pebble Garden</title>
+  <link rel="stylesheet" href="static/style.css" />
+</head>
+<body>
+
+<!-- ── Main scene ─────────────────────────────────────────── -->
+<div id="scene">
+
+  <!-- Clouds -->
+  <div class="cloud cloud-1"></div>
+  <div class="cloud cloud-2"></div>
+  <div class="cloud cloud-3"></div>
+
+  <!-- Header row -->
+  <div id="header">
+    <div id="title">🌸 Pebble Garden</div>
+    <div id="status-area">
+      <div id="pod-count">No pods connected</div>
+      <div id="status-badge" class="waiting">Ready</div>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="progress-wrap">
+    <div id="progress-label">Garden: 0%</div>
+    <div id="progress-track">
+      <div id="progress-fill"></div>
+    </div>
+  </div>
+
+  <!-- Background trees — injected by game.js, behind flowers -->
+  <div id="trees-bg"></div>
+
+  <!-- Garden — foreground flowers injected by game.js -->
+  <div id="garden"></div>
+
+</div>
+
+<!-- ── Waiting / Start overlay ────────────────────────────── -->
+<div id="waiting-overlay">
+  <div id="waiting-title">🌱 Pebble Garden</div>
+  <div id="waiting-sub">Pick up your pods and get ready to grow!</div>
+  <button id="btn-start">Start Session</button>
+  <button id="lang-toggle" title="Switch language / 切换语言">中文</button>
+</div>
+
+<!-- ── Win overlay ────────────────────────────────────────── -->
+<div id="win-overlay">
+  <div id="win-title">🌸 Full Bloom! 🌸</div>
+  <div id="win-sub">Amazing work — the garden is complete!</div>
+  <button id="btn-reset">Play Again</button>
+</div>
+
+<!-- ── Facilitator shortcut ───────────────────────────────── -->
+<div id="facilitator-start" title="Start a new session">▶ Start session</div>
+
+<!-- ── Connection indicator ───────────────────────────────── -->
+<div id="conn-dot" title="WebSocket connection"></div>
+
+<script src="static/game.js"></script>
+</body>
+</html>
