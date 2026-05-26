@@ -2,7 +2,7 @@
 Pebble launcher — run from the pebble/ root with the venv active.
 
     python run.py flower        # flower game only
-    python run.py hub           # volume game only
+    python run.py volume        # volume game only
     python run.py both          # both simultaneously (one BLE connection per pod)
     python run.py flower --simulate
     python run.py both   --simulate --sim-pods 4
@@ -89,7 +89,7 @@ async def run_flower(simulate: bool, sim_pods: int) -> None:
     await asyncio.gather(ws_coro, ble_coro)
 
 
-async def run_hub(simulate: bool, sim_pods: int) -> None:
+async def run_volume(simulate: bool, sim_pods: int) -> None:
     controller = _build_hub()
 
     if simulate:
@@ -121,7 +121,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pebble launcher.")
     parser.add_argument(
         "mode",
-        choices=["flower", "hub", "both"],
+        choices=["flower", "volume", "both"],
         help="Which game(s) to run.",
     )
     parser.add_argument(
@@ -136,7 +136,7 @@ def main() -> None:
 
     runners = {
         "flower": run_flower,
-        "hub":    run_hub,
+        "volume": run_volume,
         "both":   run_both,
     }
 
