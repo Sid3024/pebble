@@ -8,37 +8,72 @@ import websockets.server
 
 from ..config.config import FlowerConfig
 from ..engine.controller import FlowerController
+from ..engine.competitive import CompetitiveFlowerController
 
 
 class FlowerWSServer:
     """
-    WebSocket server that bridges FlowerController state to the browser dashboard.
+    WebSocket server and session orchestrator.
 
-    - Broadcasts game state to all connected clients every broadcast_interval_s.
-    - Receives {"action": "start"} and {"action": "reset"} from the dashboard.
+    - Owns the active controller (single or competitive).
+    - Exposes process_window() so BLE clients treat the server as the controller.
+    - Creates the right controller when the dashboard sends {"action":"start","mode":"..."}.
+    - Resets to waiting state (no controller) on {"action":"reset"}.
     """
 
-    def __init__(self, controller: FlowerController, config: FlowerConfig) -> None:
-        self._controller = controller
+    def __init__(self, config: FlowerConfig) -> None:
         self._config = config
+        self._controller: FlowerController | CompetitiveFlowerController | None = None
         self._clients: set[websockets.server.WebSocketServerProtocol] = set()
+
+    # ── BLE / simulator interface ─────────────────────────────
+
+    def process_window(self, device_name: str, window_sum: float) -> None:
+        if self._controller is not None:
+            self._controller.process_window(device_name, window_sum)
+
+    # ── Internal state helpers ────────────────────────────────
+
+    def _get_state(self) -> dict:
+        if self._controller is None:
+            return {
+                "mode":         "single",
+                "phase":        "waiting",
+                "progress":     0.0,
+                "total_growth": 0.0,
+                "total_needed": self._config.total_growth_needed,
+                "num_devices":  0,
+                "devices":      {},
+                "plants":       [{"id": i, "growth": 0.0}
+                                 for i in range(self._config.num_plants)],
+            }
+        return self._controller.get_state()
+
+    def _handle_action(self, msg: dict) -> None:
+        action = msg.get("action")
+        if action == "start":
+            mode = msg.get("mode", "single")
+            if mode == "competitive":
+                self._controller = CompetitiveFlowerController(self._config)
+            else:
+                self._controller = FlowerController(self._config)
+            self._controller.start_session()
+        elif action == "reset":
+            self._controller = None   # return to waiting; user picks mode again
+
+    # ── WebSocket handler ─────────────────────────────────────
 
     async def _handler(self, websocket: websockets.server.WebSocketServerProtocol) -> None:
         self._clients.add(websocket)
         print(f"[WS] dashboard connected ({len(self._clients)} total)")
         try:
-            # Send current state immediately on connect
-            await websocket.send(json.dumps(self._controller.get_state()))
+            await websocket.send(json.dumps(self._get_state()))
             async for raw in websocket:
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                action = msg.get("action")
-                if action == "start":
-                    self._controller.start_session()
-                elif action == "reset":
-                    self._controller.reset()
+                self._handle_action(msg)
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
@@ -50,7 +85,7 @@ class FlowerWSServer:
             await asyncio.sleep(self._config.broadcast_interval_s)
             if not self._clients:
                 continue
-            payload = json.dumps(self._controller.get_state())
+            payload = json.dumps(self._get_state())
             dead = set()
             for ws in list(self._clients):
                 try:
@@ -70,5 +105,5 @@ class FlowerWSServer:
                 f"[WS] server listening on "
                 f"ws://{self._config.ws_host}:{self._config.ws_port}"
             )
-            await asyncio.Future()  # run until cancelled
+            await asyncio.Future()
         broadcast_task.cancel()

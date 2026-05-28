@@ -12,11 +12,10 @@ import argparse
 import asyncio
 
 from .config.config import FlowerConfig
-from .engine.controller import FlowerController
 from .ws.server import FlowerWSServer
 
 
-async def _run_with_ble(controller: FlowerController, config: FlowerConfig) -> None:
+async def _run_with_ble(server: FlowerWSServer, config: FlowerConfig) -> None:
     from ble.scanner import scan_for_pebbles
     from .ble.client import PebbleClient
 
@@ -28,23 +27,18 @@ async def _run_with_ble(controller: FlowerController, config: FlowerConfig) -> N
         return
 
     print(f"[HUB] Found {len(devices)}: {[d.name for d in devices]}")
-    clients = [PebbleClient(d, controller) for d in devices]
+    clients = [PebbleClient(d, server) for d in devices]
     await asyncio.gather(*[c.run() for c in clients])
 
 
-async def _run_with_simulator(
-    controller: FlowerController, config: FlowerConfig, num_pods: int
-) -> None:
+async def _run_with_simulator(server: FlowerWSServer, num_pods: int) -> None:
     from .simulator import run_simulated_pods
-
-    controller.start_session()
-    await run_simulated_pods(controller, num_pods=num_pods)
+    await run_simulated_pods(server, num_pods=num_pods)
 
 
 async def main(simulate: bool = False, sim_pods: int = 3) -> None:
     config = FlowerConfig()
-    controller = FlowerController(config)
-    ws_server = FlowerWSServer(controller, config)
+    server = FlowerWSServer(config)
 
     print("=" * 55)
     print("  Pebble Garden — Flower Game")
@@ -53,14 +47,14 @@ async def main(simulate: bool = False, sim_pods: int = 3) -> None:
     print(f"  WebSocket: ws://{config.ws_host}:{config.ws_port}")
     print("=" * 55)
 
-    game_task = asyncio.create_task(
-        _run_with_simulator(controller, config, sim_pods)
+    ble_coro = (
+        _run_with_simulator(server, sim_pods)
         if simulate
-        else _run_with_ble(controller, config)
+        else _run_with_ble(server, config)
     )
 
     try:
-        await asyncio.gather(ws_server.run(), game_task)
+        await asyncio.gather(server.run(), ble_coro)
     except asyncio.CancelledError:
         pass
 

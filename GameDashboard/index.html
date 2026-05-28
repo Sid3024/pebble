@@ -25,7 +25,7 @@
     </div>
   </div>
 
-  <!-- Progress bar -->
+  <!-- Single-mode progress bar (hidden in competitive mode) -->
   <div id="progress-wrap">
     <div id="progress-label">Garden: 0%</div>
     <div id="progress-track">
@@ -33,11 +33,42 @@
     </div>
   </div>
 
-  <!-- Background trees — injected by game.js, behind flowers -->
+  <!-- Background trees — always visible -->
   <div id="trees-bg"></div>
 
-  <!-- Garden — foreground flowers injected by game.js -->
+  <!-- Single-mode flower garden -->
   <div id="garden"></div>
+
+  <!-- Competitive-mode split view (shown via #scene.competitive class) -->
+  <div id="competitive-view">
+    <div class="team-panel" id="team-panel-0">
+      <div class="team-header">
+        <div class="team-label" id="team-label-0">Team 1</div>
+        <div class="team-progress-wrap">
+          <div class="team-progress-label" id="team-progress-label-0">0%</div>
+          <div class="team-progress-track">
+            <div class="team-progress-fill" id="team-progress-fill-0"></div>
+          </div>
+        </div>
+      </div>
+      <div class="team-garden" id="garden-0"></div>
+    </div>
+
+    <div class="team-divider"></div>
+
+    <div class="team-panel" id="team-panel-1">
+      <div class="team-header">
+        <div class="team-label" id="team-label-1">Team 2</div>
+        <div class="team-progress-wrap">
+          <div class="team-progress-label" id="team-progress-label-1">0%</div>
+          <div class="team-progress-track">
+            <div class="team-progress-fill" id="team-progress-fill-1"></div>
+          </div>
+        </div>
+      </div>
+      <div class="team-garden" id="garden-1"></div>
+    </div>
+  </div>
 
 </div>
 
@@ -45,6 +76,12 @@
 <div id="waiting-overlay">
   <div id="waiting-title">🌱 Pebble Garden</div>
   <div id="waiting-sub">Pick up your pods and get ready to grow!</div>
+
+  <div id="mode-select">
+    <button class="mode-btn active" id="btn-mode-single">Single Team</button>
+    <button class="mode-btn" id="btn-mode-competitive">Multiplayer</button>
+  </div>
+
   <button id="btn-start">Start Session</button>
   <button id="lang-toggle" title="Switch language / 切换语言">中文</button>
 </div>
