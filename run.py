@@ -32,16 +32,27 @@ async def _connect_ble(controller, scan_timeout: float) -> None:
     from ble.scanner import scan_for_pebbles
     from ble.client import PebbleClient
 
-    print(f"[BLE] Scanning for Pebble pods ({scan_timeout}s)...")
-    devices = await scan_for_pebbles(timeout=scan_timeout)
+    known: set[str] = set()   # BLE addresses already spawned
 
-    if not devices:
-        print("[BLE] No pods found.")
-        return
+    async def scan_and_connect() -> None:
+        devices = await scan_for_pebbles(timeout=scan_timeout)
+        new = [d for d in devices if d.address not in known]
+        if new:
+            print(f"[BLE] Found {len(new)} new pod(s): {[d.name for d in new]}")
+            for d in new:
+                known.add(d.address)
+                asyncio.create_task(PebbleClient(d, controller).run())
 
-    print(f"[BLE] Found {len(devices)}: {[d.name for d in devices]}")
-    clients = [PebbleClient(d, controller) for d in devices]
-    await asyncio.gather(*[c.run() for c in clients])
+    print(f"[BLE] Scanning for Pebble pods ({scan_timeout}s)…")
+    await scan_and_connect()
+
+    if not known:
+        print("[BLE] No pods found on initial scan — will keep checking every 15 s.")
+
+    # Periodically re-scan so pods that appear later are picked up automatically.
+    while True:
+        await asyncio.sleep(15.0)
+        await scan_and_connect()
 
 
 async def _simulate_ble(controller, num_pods: int) -> None:
@@ -53,13 +64,11 @@ async def _simulate_ble(controller, num_pods: int) -> None:
 
 def _build_flower():
     from FlowerGame.config.config import FlowerConfig
-    from FlowerGame.engine.controller import FlowerController
     from FlowerGame.ws.server import FlowerWSServer
 
     config = FlowerConfig()
-    controller = FlowerController(config)
-    server = FlowerWSServer(controller, config)
-    return controller, server.run(), config
+    server = FlowerWSServer(config)
+    return server, server.run(), config
 
 
 def _build_hub():

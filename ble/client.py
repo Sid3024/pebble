@@ -28,16 +28,19 @@ class PebbleClient:
             print(f"[{self.name}] ERROR in window callback: {exc}")
 
     async def run(self) -> None:
-        async with BleakClient(self._device) as client:
-            print(f"[{self.name}] connected")
-            services = client.services
-            has_char = any(
-                str(c.uuid).lower() == WINDOW_CHAR_UUID.lower()
-                for s in services for c in s.characteristics
-            )
-            print(f"[{self.name}] window characteristic present: {has_char}")
-            await client.start_notify(WINDOW_CHAR_UUID, self._on_window)
-            print(f"[{self.name}] subscribed to window notifications")
-            while client.is_connected:
-                await asyncio.sleep(1.0)
-        print(f"[{self.name}] disconnected")
+        """Connect and auto-reconnect on disconnect or error."""
+        RETRY_DELAY = 5.0
+        while True:
+            try:
+                async with BleakClient(self._device) as client:
+                    print(f"[{self.name}] connected")
+                    await client.start_notify(WINDOW_CHAR_UUID, self._on_window)
+                    print(f"[{self.name}] subscribed to window notifications")
+                    while client.is_connected:
+                        await asyncio.sleep(1.0)
+                print(f"[{self.name}] disconnected — retrying in {RETRY_DELAY:.0f}s")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(f"[{self.name}] error: {exc} — retrying in {RETRY_DELAY:.0f}s")
+            await asyncio.sleep(RETRY_DELAY)

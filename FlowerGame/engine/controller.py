@@ -120,13 +120,14 @@ class FlowerController:
             for name, tracker in self._trackers.items()
         }
         return {
-            "phase": self.phase,
-            "progress": round(self.progress, 4),
+            "mode":         "single",
+            "phase":        self.phase,
+            "progress":     round(self.progress, 4),
             "total_growth": round(self._total_growth, 2),
             "total_needed": self._config.total_growth_needed,
-            "num_devices": len(self._trackers),
-            "devices": devices,
-            "plants": self._compute_plants(),
+            "num_devices":  len(self._trackers),
+            "devices":      devices,
+            "plants":       self._compute_plants(),
         }
 
     def _compute_plants(self) -> list[dict]:

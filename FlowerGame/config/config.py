@@ -53,3 +53,8 @@ class FlowerConfig:
     # --- Broadcast rate ---
     # How often (seconds) the backend pushes garden state to the browser.
     broadcast_interval_s: float = 0.33
+
+    # --- Team pairing strategy (competitive mode only) ---
+    # "random": each new device is assigned to a random team.
+    # Future options: "alternating", "manual"
+    team_pairing: str = "random"
