@@ -3,71 +3,46 @@ from dataclasses import dataclass
 
 @dataclass
 class FlowerConfig:
-    # --- Baseline collection (mirrors hub/config/config.py) ---
-    # Windows collected per device before their personal baseline is set.
-    # During this phase the device is "warming up" and contributes no growth.
+    # --- Baseline collection ---
     baseline_n_windows: int = 2
 
     # --- Growth thresholds ---
-    # Fractional deviation ABOVE baseline that counts as active effort.
-    # Lowered to 0.05 so even gentle movement (5% above resting) earns full credit.
     growth_margin: float = 0.05
-
-    # Fractional deviation BELOW baseline before the wilt penalty applies.
-    wilt_margin: float = 0.20
+    wilt_margin:   float = 0.20
 
     # --- Growth point values ---
-    # Points awarded when a device window is above growth_margin.
-    growth_per_window: float = 3.0
-
-    # Points awarded when a device window is within both margins (resting at baseline).
-    # Raised to 2.0 so the garden grows even when participants are just holding the pod.
+    # growth_per_window is the coefficient at 1× effort; harder shaking scales it up.
+    growth_per_window:      float = 3.0
     idle_growth_per_window: float = 2.0
+    wilt_per_window:        float = 0.0
 
-    # Points subtracted when a device window is below wilt_margin (min total = 0).
-    # 0.0 = no penalty — resting never hurts progress.
-    wilt_per_window: float = 0.0
+    # --- Timed game ---
+    # Duration options shown in the UI (seconds). Adjust to taste.
+    game_durations: tuple[int, ...] = (60, 120, 180, 300)   # 1 / 2 / 3 / 5 min
+    default_duration: int = 120                    # pre-selected option
 
-    # --- Session goal ---
-    # Total accumulated growth points (across all devices) needed to reach 100%.
-    # Rule of thumb (1 window = 3 s, one pod idle ≈ 2.0 pts/window = 40 pts/min):
-    #   1 pod  → 40 pts ≈ 1 min   |  2 pods → 40 pts ≈ 30 sec
-    #   4 pods → 40 pts ≈ 15 sec  (more participants = faster win by design)
-    total_growth_needed: float = 60.0
-
-    # --- Garden visuals ---
-    # Number of plants rendered on screen (cosmetic — not tied to device count).
-    # Plants bloom left-to-right as group progress increases.
-    num_plants: int = 20
+    # --- Sprout rate ---
+    # How many score points are needed to grow ONE flower.
+    # Flowers are unlimited — raise this to slow down how fast they appear.
+    #   1  → 1 point  = 1 flower
+    #   5  → 5 points = 1 flower
+    #   10 → 10 points = 1 flower
+    sprout_points_per_plant: float = 1.0
 
     # --- BLE scanning ---
-    # How long (seconds) to scan for Pebble pods on startup.
     ble_scan_timeout: float = 10.0
 
     # --- WebSocket server ---
-    # Host and port the Python backend listens on.
-    # The browser dashboard connects to ws://ws_host:ws_port
     ws_host: str = "localhost"
     ws_port: int = 8765
-
-    # --- Broadcast rate ---
-    # How often (seconds) the backend pushes garden state to the browser.
     broadcast_interval_s: float = 0.33
 
-    # --- Team pairing strategy (competitive mode only) ---
-    # "random": each new device is assigned to a random team.
-    # Future options: "alternating", "manual"
+    # --- Late-joiner team assignment (competitive mode only) ---
+    # Devices that miss the shake-to-join phase and connect mid-game are
+    # assigned to the smaller team. "random" = balanced fill.
     team_pairing: str = "random"
 
     # --- Team selection shake threshold ---
-    # Minimum window sum for a device to register as "shaking" during team
-    # selection.  At rest, sum ≈ 300 (100 Hz × 3 s × 1 g gravity).
-    #
-    # Threshold guide:
-    #   320 (~7 % above rest)  — too sensitive, small fidgets may trigger
-    #   330 (~10 % above rest) — current: slow deliberate movement is enough
-    #   350 (~17 % above rest) — gentle shake required
-    #   380 (~27 % above rest) — original, too strong for some elderly users
-    #
-    # Adjust up if accidental joins occur, down if users struggle to register.
+    # At rest sum ≈ 300.  330 ≈ 10 % above resting — slow deliberate movement.
+    # Raise if accidental joins occur; lower if users struggle to register.
     team_select_shake_threshold: float = 330.0

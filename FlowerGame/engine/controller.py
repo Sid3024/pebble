@@ -5,10 +5,15 @@ from dataclasses import dataclass, field
 
 from ..config.config import FlowerConfig
 from effort.baseline import BaselineCalculator, expected_effort
-from ble.constants import VIBR_MILESTONE1, VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_WIN
+from ble.constants import VIBR_MILESTONE1, VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_WIN, VIBR_FLOWER_50
 
-_MILESTONES = [(0.25, VIBR_MILESTONE1), (0.50, VIBR_MILESTONE2),
-               (0.75, VIBR_MILESTONE3), (1.00, VIBR_WIN)]
+# Time-elapsed thresholds (fraction of total duration) that trigger vibration.
+# 0.25 = 25 % of time has passed, etc.
+_TIME_MILESTONES = [
+    (0.25, VIBR_MILESTONE1),
+    (0.50, VIBR_MILESTONE2),
+    (0.75, VIBR_MILESTONE3),
+]
 
 
 @dataclass
@@ -19,8 +24,8 @@ class DeviceState:
 
 class PersonGrowthTracker:
     """
-    Tracks one device's baseline and converts each window into growth points.
-    Uses the shared effort.baseline module — same baseline logic as the volume game.
+    Tracks one device's baseline and converts each window into score points.
+    Growth scales with effort: harder shaking → more points per window.
     """
 
     def __init__(self, config: FlowerConfig) -> None:
@@ -33,7 +38,7 @@ class PersonGrowthTracker:
         return self._baseline.is_ready()
 
     def process_window(self, window_sum: float) -> float:
-        """Returns growth delta for this window (negative = wilt penalty)."""
+        """Returns score delta for this window."""
         self.state.last_seen = time.monotonic()
 
         if not self._baseline.is_ready():
@@ -53,8 +58,7 @@ class PersonGrowthTracker:
 
         if window_sum > exp * (1.0 + self._config.growth_margin):
             self.state.phase = "active"
-            # Scale growth by how much harder than baseline the effort is.
-            # ratio=1 → base growth; ratio=2 → 2× growth; no upper cap.
+            # Score scales with effort ratio — no upper cap.
             return self._config.growth_per_window * (window_sum / exp)
 
         if window_sum < exp * (1.0 - self._config.wilt_margin):
@@ -67,21 +71,45 @@ class PersonGrowthTracker:
 
 class FlowerController:
     """
-    Aggregates per-device growth into a shared garden state.
-    Exposes the same process_window(device_name, window_sum) interface
-    as VolumeController so the shared BLE client works with both games.
+    Aggregates per-device score into a shared garden state.
+    Game ends when the timer expires; no fixed score goal.
     """
 
     def __init__(self, config: FlowerConfig) -> None:
-        self._config = config
-        self._trackers: dict[str, PersonGrowthTracker] = {}
-        self._total_growth: float = 0.0
-        self.phase: str = "waiting"  # waiting | playing | won
+        self._config     = config
+        self._trackers:  dict[str, PersonGrowthTracker] = {}
+        self._score:     float = 0.0
+        self.phase:      str   = "waiting"
+        self._duration:  float = 0.0
+        self._start_time: float = 0.0
         self._milestones_hit: set[float] = set()
         self._pending_vibrations: dict[str, list[int]] = {}
+        self._flower_milestone: int = 0   # tracks how many 50-flower marks passed
+
+    # ── Time ──────────────────────────────────────────────────
+
+    @property
+    def time_remaining(self) -> float:
+        if self.phase != "playing":
+            return 0.0
+        return max(0.0, self._duration - (time.monotonic() - self._start_time))
+
+    # ── Score → flower progress ───────────────────────────────
+
+    @property
+    def progress(self) -> float:
+        return 0.0   # progress bar removed — flowers are unlimited
+
+    # ── Controller interface ──────────────────────────────────
 
     def process_window(self, device_name: str, window_sum: float) -> None:
-        if self.phase not in ("playing",):
+        if self.phase != "playing":
+            return
+
+        if self.time_remaining <= 0:
+            self.phase = "won"
+            print("[GARDEN] Time's up!")
+            self._queue_vibration_all(VIBR_WIN)
             return
 
         if device_name not in self._trackers:
@@ -89,85 +117,88 @@ class FlowerController:
                   f"({self._config.baseline_n_windows} windows)")
             self._trackers[device_name] = PersonGrowthTracker(self._config)
 
-        tracker = self._trackers[device_name]
-        delta = tracker.process_window(window_sum)
+        delta = self._trackers[device_name].process_window(window_sum)
 
         if delta != 0:
-            self._total_growth = max(0.0, self._total_growth + delta)
+            self._score = max(0.0, self._score + delta)
             arrow = "↑" if delta > 0 else "↓"
-            print(
-                f"[{device_name}] score={window_sum:.2f}  "
-                f"growth {arrow}{abs(delta):.1f} → "
-                f"{self._total_growth:.1f}/{self._config.total_growth_needed:.0f} "
-                f"({self.progress * 100:.1f}%)"
-            )
-
-        if self._total_growth >= self._config.total_growth_needed:
-            self.phase = "won"
-            print("[GARDEN] Full bloom! Session complete.")
+            print(f"[{device_name}] score={window_sum:.2f}  "
+                  f"{arrow}{abs(delta):.1f} → {self._score:.1f}  "
+                  f"⏱ {self.time_remaining:.0f}s")
 
         self._check_milestones()
 
-    def _check_milestones(self) -> None:
-        for threshold, pattern_id in _MILESTONES:
-            if threshold not in self._milestones_hit and self.progress >= threshold:
-                self._milestones_hit.add(threshold)
-                for name in self._trackers:
-                    self._pending_vibrations.setdefault(name, []).append(pattern_id)
-                print(f"[GARDEN] {int(threshold*100)}% milestone — "
-                      f"queued pattern {pattern_id} for {len(self._trackers)} device(s)")
+    def start_session(self, duration_seconds: int) -> None:
+        self._trackers.clear()
+        self._score      = 0.0
+        self.phase       = "playing"
+        self._duration   = float(duration_seconds)
+        self._start_time = time.monotonic()
+        self._milestones_hit.clear()
+        self._pending_vibrations.clear()
+        self._flower_milestone = 0
+        print(f"[GARDEN] Session started — {duration_seconds}s timer.")
+
+    def reset(self) -> None:
+        self._trackers.clear()
+        self._score      = 0.0
+        self.phase       = "waiting"
+        self._duration   = 0.0
+        self._start_time = 0.0
+        self._milestones_hit.clear()
+        self._pending_vibrations.clear()
+        self._flower_milestone = 0
+        print("[GARDEN] Session reset.")
 
     def pop_vibration_commands(self, device_name: str) -> list[int]:
         return self._pending_vibrations.pop(device_name, [])
 
-    def start_session(self) -> None:
-        self._trackers.clear()
-        self._total_growth = 0.0
-        self.phase = "playing"
-        self._milestones_hit.clear()
-        self._pending_vibrations.clear()
-        print("[GARDEN] Session started.")
-
-    def reset(self) -> None:
-        self._trackers.clear()
-        self._total_growth = 0.0
-        self.phase = "waiting"
-        self._milestones_hit.clear()
-        self._pending_vibrations.clear()
-        print("[GARDEN] Session reset.")
-
-    @property
-    def progress(self) -> float:
-        return min(1.0, self._total_growth / self._config.total_growth_needed)
-
     def get_state(self) -> dict:
         devices = {
-            name: {"phase": tracker.state.phase, "ready": tracker.is_ready}
-            for name, tracker in self._trackers.items()
+            name: {"phase": t.state.phase, "ready": t.is_ready}
+            for name, t in self._trackers.items()
         }
         return {
-            "mode":         "single",
-            "phase":        self.phase,
-            "progress":     round(self.progress, 4),
-            "total_growth": round(self._total_growth, 2),
-            "total_needed": self._config.total_growth_needed,
-            "num_devices":  len(self._trackers),
-            "devices":      devices,
-            "plants":       self._compute_plants(),
+            "mode":           "single",
+            "phase":          self.phase,
+            "time_remaining": round(self.time_remaining, 1),
+            "duration":       int(self._duration),
+            "score":          int(self._score),
+            "progress":       round(self.progress, 4),
+            "num_devices":    len(self._trackers),
+            "devices":        devices,
+            "plants":         self._compute_plants(),
         }
 
+    # ── Internal ──────────────────────────────────────────────
+
+    def _check_milestones(self) -> None:
+        if self._duration == 0:
+            return
+        # Time-based milestones
+        elapsed_ratio = (time.monotonic() - self._start_time) / self._duration
+        for threshold, pattern_id in _TIME_MILESTONES:
+            if threshold not in self._milestones_hit and elapsed_ratio >= threshold:
+                self._milestones_hit.add(threshold)
+                self._queue_vibration_all(pattern_id)
+                print(f"[GARDEN] {int(threshold*100)}% time elapsed — pattern {pattern_id}")
+
+        # Score-based: every 50 flowers
+        current = int(self._score / 50)
+        if current > self._flower_milestone:
+            self._flower_milestone = current
+            self._queue_vibration_all(VIBR_FLOWER_50)
+            print(f"[GARDEN] {current * 50} flowers — happy vibration!")
+
+    def _queue_vibration_all(self, pattern_id: int) -> None:
+        for name in self._trackers:
+            self._pending_vibrations.setdefault(name, []).append(pattern_id)
+
     def _compute_plants(self) -> list[dict]:
-        n = self._config.num_plants
-        p = self.progress
-        plants = []
-        for i in range(n):
-            start = i / n
-            end = (i + 1) / n
-            if p <= start:
-                growth = 0.0
-            elif p >= end:
-                growth = 1.0
-            else:
-                growth = (p - start) / (end - start)
-            plants.append({"id": i, "growth": round(growth, 4)})
+        pts      = self._config.sprout_points_per_plant
+        num_full = int(self._score / pts)
+        partial  = (self._score % pts) / pts   # fractional bloom of the next flower
+        plants   = [{"id": i, "growth": 1.0} for i in range(num_full)]
+        if partial > 0.001:
+            plants.append({"id": num_full, "growth": round(partial, 4)})
         return plants

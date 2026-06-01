@@ -21,16 +21,14 @@
     <div id="title">🌸 Pebble Garden</div>
     <div id="status-area">
       <div id="pod-count">No pods connected</div>
+      <div id="timer-display" class="hidden">--:--</div>
       <div id="status-badge" class="waiting">Ready</div>
     </div>
   </div>
 
-  <!-- Single-mode progress bar (hidden in competitive mode) -->
+  <!-- Single-mode score display -->
   <div id="progress-wrap">
-    <div id="progress-label">Garden: 0%</div>
-    <div id="progress-track">
-      <div id="progress-fill"></div>
-    </div>
+    <div id="progress-label">Score: 0 pts</div>
   </div>
 
   <!-- Background trees — always visible -->
@@ -44,12 +42,7 @@
     <div class="team-panel" id="team-panel-0">
       <div class="team-header">
         <div class="team-label" id="team-label-0">Team 1</div>
-        <div class="team-progress-wrap">
-          <div class="team-progress-label" id="team-progress-label-0">0%</div>
-          <div class="team-progress-track">
-            <div class="team-progress-fill" id="team-progress-fill-0"></div>
-          </div>
-        </div>
+        <div class="team-score-label" id="team-score-label-0">0 pts</div>
       </div>
       <div class="team-garden" id="garden-0"></div>
     </div>
@@ -59,12 +52,7 @@
     <div class="team-panel" id="team-panel-1">
       <div class="team-header">
         <div class="team-label" id="team-label-1">Team 2</div>
-        <div class="team-progress-wrap">
-          <div class="team-progress-label" id="team-progress-label-1">0%</div>
-          <div class="team-progress-track">
-            <div class="team-progress-fill" id="team-progress-fill-1"></div>
-          </div>
-        </div>
+        <div class="team-score-label" id="team-score-label-1">0 pts</div>
       </div>
       <div class="team-garden" id="garden-1"></div>
     </div>
@@ -76,6 +64,16 @@
 <div id="waiting-overlay">
   <div id="waiting-title">🌱 Pebble Garden</div>
   <div id="waiting-sub">Pick up your pods and get ready to grow!</div>
+
+  <div id="duration-select">
+    <div id="duration-label">Game Duration</div>
+    <div id="duration-buttons">
+      <button class="dur-btn" data-secs="60">1 min</button>
+      <button class="dur-btn active" data-secs="120">2 min</button>
+      <button class="dur-btn" data-secs="180">3 min</button>
+      <button class="dur-btn" data-secs="300">5 min</button>
+    </div>
+  </div>
 
   <div id="mode-select">
     <button class="mode-btn active" id="btn-mode-single">Single Team</button>
