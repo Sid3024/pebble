@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 
 from ..config.config import FlowerConfig
 from effort.baseline import BaselineCalculator, expected_effort
+from ble.constants import VIBR_MILESTONE1, VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_WIN
+
+_MILESTONES = [(0.25, VIBR_MILESTONE1), (0.50, VIBR_MILESTONE2),
+               (0.75, VIBR_MILESTONE3), (1.00, VIBR_WIN)]
 
 
 @dataclass
@@ -49,7 +53,9 @@ class PersonGrowthTracker:
 
         if window_sum > exp * (1.0 + self._config.growth_margin):
             self.state.phase = "active"
-            return self._config.growth_per_window
+            # Scale growth by how much harder than baseline the effort is.
+            # ratio=1 → base growth; ratio=2 → 2× growth; no upper cap.
+            return self._config.growth_per_window * (window_sum / exp)
 
         if window_sum < exp * (1.0 - self._config.wilt_margin):
             self.state.phase = "wilt"
@@ -71,6 +77,8 @@ class FlowerController:
         self._trackers: dict[str, PersonGrowthTracker] = {}
         self._total_growth: float = 0.0
         self.phase: str = "waiting"  # waiting | playing | won
+        self._milestones_hit: set[float] = set()
+        self._pending_vibrations: dict[str, list[int]] = {}
 
     def process_window(self, device_name: str, window_sum: float) -> None:
         if self.phase not in ("playing",):
@@ -98,16 +106,34 @@ class FlowerController:
             self.phase = "won"
             print("[GARDEN] Full bloom! Session complete.")
 
+        self._check_milestones()
+
+    def _check_milestones(self) -> None:
+        for threshold, pattern_id in _MILESTONES:
+            if threshold not in self._milestones_hit and self.progress >= threshold:
+                self._milestones_hit.add(threshold)
+                for name in self._trackers:
+                    self._pending_vibrations.setdefault(name, []).append(pattern_id)
+                print(f"[GARDEN] {int(threshold*100)}% milestone — "
+                      f"queued pattern {pattern_id} for {len(self._trackers)} device(s)")
+
+    def pop_vibration_commands(self, device_name: str) -> list[int]:
+        return self._pending_vibrations.pop(device_name, [])
+
     def start_session(self) -> None:
         self._trackers.clear()
         self._total_growth = 0.0
         self.phase = "playing"
+        self._milestones_hit.clear()
+        self._pending_vibrations.clear()
         print("[GARDEN] Session started.")
 
     def reset(self) -> None:
         self._trackers.clear()
         self._total_growth = 0.0
         self.phase = "waiting"
+        self._milestones_hit.clear()
+        self._pending_vibrations.clear()
         print("[GARDEN] Session reset.")
 
     @property

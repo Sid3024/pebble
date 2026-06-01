@@ -15,6 +15,7 @@ const STRINGS = {
     badgeWaiting:     "Ready",
     badgePlaying:     "Growing!",
     badgeWon:         "Full Bloom!",
+    badgeSelecting:   "Picking Teams",
     waitingTitle:     "🌱 Pebble Garden",
     waitingSub:       "Pick up your pods and get ready to grow!",
     modeSingle:       "Single Team",
@@ -28,6 +29,16 @@ const STRINGS = {
     team:             (n) => `Team ${n}`,
     facilitator:      "▶ Start session",
     langBtn:          "中文",
+    tsTitle:          (n) => `Team ${n} — Join Up! ${["🔵","🔴"][n-1]}`,
+    tsSub:            (n) => `Shake your weights to join Team ${n}!`,
+    tsShakingIn:      "shaking in ✓",
+    tsWaiting:        "waiting…",
+    tsLocked:         "locked in ✓",
+    tsFull:           "Team Full! ✓",
+    tsJoined:         "joined",
+    tsNextTeam:       "Next: Team 2 →",
+    tsBeginGame:      "Let's Play! 🌸",
+    tsPeople:         (n) => n === 1 ? "1 person" : `${n} people`,
   },
   zh: {
     title:            "🌸 卵石花园",
@@ -38,6 +49,7 @@ const STRINGS = {
     badgeWaiting:     "准备好了",
     badgePlaying:     "生长中！",
     badgeWon:         "全开了！",
+    badgeSelecting:   "选择队伍",
     waitingTitle:     "🌱 卵石花园",
     waitingSub:       "拿起您的器材，准备开始！",
     modeSingle:       "单队模式",
@@ -51,6 +63,16 @@ const STRINGS = {
     team:             (n) => `队伍${["一","二"][n-1] || n}`,
     facilitator:      "▶ 开始",
     langBtn:          "EN",
+    tsTitle:          (n) => `队伍${["一","二"][n-1] || n} — 加入！${["🔵","🔴"][n-1]}`,
+    tsSub:            (n) => `摇动器材加入队伍${["一","二"][n-1] || n}！`,
+    tsShakingIn:      "已加入 ✓",
+    tsWaiting:        "等待中…",
+    tsLocked:         "已锁定 ✓",
+    tsFull:           "队伍已满！✓",
+    tsJoined:         "人已加入",
+    tsNextTeam:       "下一队：队伍二 →",
+    tsBeginGame:      "开始游戏！🌸",
+    tsPeople:         (n) => `${n} 人`,
   },
 };
 
@@ -83,12 +105,13 @@ const TREE_DEFS = [
 ];
 
 // ── State ────────────────────────────────────────────────────
-let socket        = null;
-let lastPhase     = null;
-let lastMode      = null;
-let lastPodCount  = null;
-let lastProgress  = null;
-let selectedMode  = "single";   // user's choice in waiting overlay
+let socket           = null;
+let lastPhase        = null;
+let lastMode         = null;
+let lastPodCount     = null;
+let lastProgress     = null;
+let selectedMode     = "single";   // user's choice in waiting overlay
+let lastTSCounts     = [-1, -1];   // cached team-select counts for animation
 
 let plantEls      = [];         // single mode
 let teamPlantEls  = [[], []];   // competitive mode, indexed by team id
@@ -117,10 +140,18 @@ function applyLang() {
   document.getElementById("lang-toggle").textContent          = t("langBtn");
   document.documentElement.lang                               = lang;
 
-  // Update team labels
+  // Update team labels (competitive game view)
   [0, 1].forEach(i => {
     const el = document.getElementById(`team-label-${i}`);
     if (el) el.textContent = t("team", i + 1);
+  });
+
+  // Team selection overlay strings
+  document.getElementById("btn-next-team").textContent  = t("tsNextTeam");
+  document.getElementById("btn-begin-game").textContent = t("tsBeginGame");
+  [0, 1].forEach(i => {
+    const nameEl = document.getElementById(`ts-card-name-${i}`);
+    if (nameEl) nameEl.textContent = t("team", i + 1);
   });
 
   // Re-render dynamic strings using last known values
@@ -274,6 +305,15 @@ function updateGame(state) {
     : (state.num_devices || 0);
   updatePodCount(totalDevices);
 
+  // Team selection phase — special overlay, skip normal layout
+  if (phase === "team_select") {
+    updateTeamSelect(state);
+    return;
+  }
+
+  // Hide team-select overlay if we've moved past it
+  document.getElementById("team-select-overlay").classList.remove("visible");
+
   // Switch layout
   document.getElementById("scene").classList.toggle("competitive", mode === "competitive");
 
@@ -286,6 +326,74 @@ function updateGame(state) {
   } else {
     updateProgress(state.progress || 0);
     updatePlants(state.plants, plantEls);
+  }
+}
+
+// ── Team selection overlay ────────────────────────────────────
+function updateTeamSelect(state) {
+  const overlay = document.getElementById("team-select-overlay");
+  overlay.classList.add("visible");
+  document.getElementById("waiting-overlay").classList.add("hidden");
+
+  const step  = state.team_select_step ?? 0;
+  const teams = state.teams || [{id:0,num_devices:0},{id:1,num_devices:0}];
+  const t0    = teams.find(tm => tm.id === 0) || {num_devices: 0, quota: null, locked: false};
+  const t1    = teams.find(tm => tm.id === 1) || {num_devices: 0};
+  const counts = [t0.num_devices || 0, t1.num_devices || 0];
+
+  document.getElementById("ts-title").textContent    = t("tsTitle", step + 1);
+  document.getElementById("ts-subtitle").textContent = t("tsSub",   step + 1);
+
+  const badge = document.getElementById("status-badge");
+  badge.className = "active";
+  badge.textContent = t("badgeSelecting");
+
+  document.getElementById("btn-next-team").style.display  = step === 0 ? "" : "none";
+  document.getElementById("btn-begin-game").style.display = step === 1 ? "" : "none";
+
+  // Animate count bumps
+  [0, 1].forEach(i => {
+    const countEl  = document.getElementById(`ts-count-${i}`);
+    const newCount = counts[i];
+    if (newCount !== lastTSCounts[i]) {
+      lastTSCounts[i] = newCount;
+      countEl.textContent = newCount;
+      countEl.classList.remove("ts-count-bump");
+      void countEl.offsetWidth;
+      countEl.classList.add("ts-count-bump");
+    }
+  });
+
+  // ── Team 1 card ───────────────────────────────────────────
+  const card0  = document.getElementById("ts-card-0");
+  const label0 = document.getElementById("ts-card-label-0");
+
+  if (step > 0) {
+    // Phase moved on — Team 1 is done
+    card0.className     = "ts-card ts-locked";
+    label0.textContent  = t("tsLocked");
+  } else if (t0.locked) {
+    // Quota reached — Team 1 full
+    card0.className     = "ts-card ts-full";
+    label0.textContent  = t("tsFull");
+  } else {
+    // Actively accepting
+    card0.className     = "ts-card ts-active";
+    label0.textContent  = t0.quota
+      ? `${counts[0]} / ${t0.quota} ${t("tsJoined")}`
+      : t("tsShakingIn");
+  }
+
+  // ── Team 2 card ───────────────────────────────────────────
+  const card1  = document.getElementById("ts-card-1");
+  const label1 = document.getElementById("ts-card-label-1");
+
+  if (step === 1) {
+    card1.className    = "ts-card ts-active";
+    label1.textContent = t("tsShakingIn");
+  } else {
+    card1.className    = "ts-card ts-waiting";
+    label1.textContent = t("tsWaiting");
   }
 }
 
@@ -348,8 +456,10 @@ function updatePhaseUI(phase, mode, winner) {
     case "waiting":
       waiting.classList.remove("hidden");
       win.classList.remove("visible");
+      document.getElementById("team-select-overlay").classList.remove("visible");
       delete win.dataset.winner;
       delete win.dataset.confettiDone;
+      lastTSCounts = [-1, -1];
       break;
 
     case "playing":
@@ -387,6 +497,12 @@ function attachButtons() {
   );
   document.getElementById("btn-reset").addEventListener("click", () =>
     sendAction("reset")
+  );
+  document.getElementById("btn-next-team").addEventListener("click", () =>
+    sendAction("next_team")
+  );
+  document.getElementById("btn-begin-game").addEventListener("click", () =>
+    sendAction("begin_game")
   );
   document.getElementById("facilitator-start").addEventListener("click", () =>
     sendAction("start", { mode: selectedMode })

@@ -58,3 +58,16 @@ class FlowerConfig:
     # "random": each new device is assigned to a random team.
     # Future options: "alternating", "manual"
     team_pairing: str = "random"
+
+    # --- Team selection shake threshold ---
+    # Minimum window sum for a device to register as "shaking" during team
+    # selection.  At rest, sum ≈ 300 (100 Hz × 3 s × 1 g gravity).
+    #
+    # Threshold guide:
+    #   320 (~7 % above rest)  — too sensitive, small fidgets may trigger
+    #   330 (~10 % above rest) — current: slow deliberate movement is enough
+    #   350 (~17 % above rest) — gentle shake required
+    #   380 (~27 % above rest) — original, too strong for some elderly users
+    #
+    # Adjust up if accidental joins occur, down if users struggle to register.
+    team_select_shake_threshold: float = 330.0
