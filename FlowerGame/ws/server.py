@@ -32,6 +32,10 @@ class FlowerWSServer:
         if self._controller is not None:
             self._controller.process_window(device_name, window_sum)
 
+    def pop_vibration_commands(self, device_name: str) -> list[int]:
+        fn = getattr(self._controller, "pop_vibration_commands", None)
+        return fn(device_name) if fn else []
+
     # ── Internal state helpers ────────────────────────────────
 
     def _get_state(self) -> dict:
@@ -58,6 +62,12 @@ class FlowerWSServer:
             else:
                 self._controller = FlowerController(self._config)
             self._controller.start_session()
+        elif action == "next_team":
+            if hasattr(self._controller, "next_team"):
+                self._controller.next_team()
+        elif action == "begin_game":
+            if hasattr(self._controller, "begin_game"):
+                self._controller.begin_game()
         elif action == "reset":
             self._controller = None   # return to waiting; user picks mode again
 
