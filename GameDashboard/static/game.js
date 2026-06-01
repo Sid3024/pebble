@@ -10,21 +10,25 @@ const STRINGS = {
     title:            "🌸 Pebble Garden",
     noPods:           "No pods connected",
     pods:             (n) => `${n} pod${n !== 1 ? "s" : ""} connected`,
-    progress:         (pct) => `Garden: ${pct}%`,
-    teamProgress:     (pct) => `${pct}%`,
+    score:            (s) => `Score: ${s} pts`,
+    teamScore:        (s) => `${s} pts`,
+    durationLabel:    "Game Duration",
+    durMin:           (m) => `${m} min`,
     badgeWaiting:     "Ready",
     badgePlaying:     "Growing!",
-    badgeWon:         "Full Bloom!",
+    badgeWon:         "Time's Up!",
     badgeSelecting:   "Picking Teams",
     waitingTitle:     "🌱 Pebble Garden",
     waitingSub:       "Pick up your pods and get ready to grow!",
     modeSingle:       "Single Team",
     modeCompetitive:  "Multiplayer",
     btnStart:         "Start Session",
-    winTitle:         "🌸 Full Bloom! 🌸",
-    winSub:           "Amazing work — the garden is complete!",
+    winTitle:         "🌸 Time's Up! 🌸",
+    winSub:           (s) => `Final score: ${s} pts — amazing work!`,
     teamWinsTitle:    (n) => `🏆 Team ${n} Wins! 🏆`,
-    teamWinsSub:      (n) => `Congratulations Team ${n} — garden in full bloom!`,
+    teamWinsSub:      (s0, s1) => `Team 1: ${s0} pts  |  Team 2: ${s1} pts`,
+    teamTieTitle:     "🌸 It's a Tie! 🌸",
+    teamTieSub:       (s0, s1) => `Team 1: ${s0} pts  |  Team 2: ${s1} pts`,
     btnReset:         "Play Again",
     team:             (n) => `Team ${n}`,
     facilitator:      "▶ Start session",
@@ -44,21 +48,25 @@ const STRINGS = {
     title:            "🌸 卵石花园",
     noPods:           "未连接设备",
     pods:             (n) => `已连接 ${n} 个设备`,
-    progress:         (pct) => `花园：${pct}%`,
-    teamProgress:     (pct) => `${pct}%`,
+    score:            (s) => `得分：${s} 分`,
+    teamScore:        (s) => `${s} 分`,
+    durationLabel:    "游戏时长",
+    durMin:           (m) => `${m} 分钟`,
     badgeWaiting:     "准备好了",
     badgePlaying:     "生长中！",
-    badgeWon:         "全开了！",
+    badgeWon:         "时间到！",
     badgeSelecting:   "选择队伍",
     waitingTitle:     "🌱 卵石花园",
     waitingSub:       "拿起您的器材，准备开始！",
     modeSingle:       "单队模式",
     modeCompetitive:  "多人模式",
     btnStart:         "开始",
-    winTitle:         "🌸 全部盛开！🌸",
-    winSub:           "太棒了 — 花园完成了！",
+    winTitle:         "🌸 时间到！🌸",
+    winSub:           (s) => `最终得分：${s} 分 — 太棒了！`,
     teamWinsTitle:    (n) => `🏆 队伍${["一","二"][n-1] || n}获胜！🏆`,
-    teamWinsSub:      (n) => `恭喜队伍${["一","二"][n-1] || n} — 花园全部盛开！`,
+    teamWinsSub:      (s0, s1) => `队伍一：${s0} 分  |  队伍二：${s1} 分`,
+    teamTieTitle:     "🌸 平局！🌸",
+    teamTieSub:       (s0, s1) => `队伍一：${s0} 分  |  队伍二：${s1} 分`,
     btnReset:         "再玩一次",
     team:             (n) => `队伍${["一","二"][n-1] || n}`,
     facilitator:      "▶ 开始",
@@ -87,11 +95,12 @@ function t(key, ...args) {
 const PETAL_COLORS = [
   "#FF5FA8", "#CC66DD", "#FF7030", "#FFD000", "#8855CC", "#FF3D6A",
 ];
-const STEM_HEIGHTS = [
-  195, 235, 210, 260, 230, 200, 250, 220, 245, 205,
-  265, 225, 215, 255, 240, 208, 270, 232, 218, 248,
-];
 const NUM_PETALS = 8;
+
+// Golden ratio — gives a beautiful spread with no clustering as count grows.
+const φ = 0.618033988749895;
+function flowerX(id)          { return ((id * φ)         % 1) * 86 + 7; }  // 7–93 %
+function flowerStemH(id, scl) { return Math.round((140 + ((id * φ * 2.3) % 1) * 130) * scl); }
 
 // ── Background tree configuration ────────────────────────────
 const TREE_DEFS = [
@@ -110,21 +119,37 @@ let lastPhase        = null;
 let lastMode         = null;
 let lastPodCount     = null;
 let lastProgress     = null;
-let selectedMode     = "single";   // user's choice in waiting overlay
-let lastTSCounts     = [-1, -1];   // cached team-select counts for animation
+let selectedMode     = "single";
+let selectedDuration = 120;
+let lastTSCounts     = [-1, -1];
+let lastStateTeams   = null;   // last competitive teams array (for win overlay)
+let lastStateSingle  = null;   // last single state (for win overlay)
 
-let plantEls      = [];         // single mode
-let teamPlantEls  = [[], []];   // competitive mode, indexed by team id
+// Garden objects — el: DOM container, els: sparse array of plant elements, scale: size factor
+const SINGLE_GARDEN = { el: null, els: [], scale: 1.0 };
+const TEAM_GARDENS  = [
+  { el: null, els: [], scale: 0.62 },
+  { el: null, els: [], scale: 0.62 },
+];
 
 // ── Bootstrap ────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  SINGLE_GARDEN.el   = document.getElementById("garden");
+  TEAM_GARDENS[0].el = document.getElementById("garden-0");
+  TEAM_GARDENS[1].el = document.getElementById("garden-1");
   buildTrees();
-  plantEls = buildGarden("garden", 1.0);
-  teamPlantEls[0] = buildGarden("garden-0", 0.62);
-  teamPlantEls[1] = buildGarden("garden-1", 0.62);
   attachButtons();
   connect();
 });
+
+function clearGarden(g) {
+  if (g.el) g.el.innerHTML = "";
+  g.els = [];
+}
+function clearAllGardens() {
+  clearGarden(SINGLE_GARDEN);
+  TEAM_GARDENS.forEach(g => clearGarden(g));
+}
 
 // ── Language toggle ──────────────────────────────────────────
 function applyLang() {
@@ -144,6 +169,13 @@ function applyLang() {
   [0, 1].forEach(i => {
     const el = document.getElementById(`team-label-${i}`);
     if (el) el.textContent = t("team", i + 1);
+  });
+
+  // Duration selector
+  document.getElementById("duration-label").textContent = t("durationLabel");
+  document.querySelectorAll(".dur-btn").forEach(btn => {
+    const secs = parseInt(btn.dataset.secs);
+    btn.textContent = t("durMin", secs / 60);
   });
 
   // Team selection overlay strings
@@ -215,61 +247,49 @@ function buildTrees() {
   });
 }
 
-// ── Build a flower garden ─────────────────────────────────────
-// scale: 1.0 for single mode, ~0.62 for competitive (half-width panels)
-function buildGarden(containerId, scale) {
-  const garden = document.getElementById(containerId);
-  if (!garden) return [];
-  garden.innerHTML = "";
-  const els = [];
+// ── Spawn one flower into a garden container ──────────────────
+function spawnFlower(gardenEl, id, scale) {
+  const color  = PETAL_COLORS[id % PETAL_COLORS.length];
+  const height = flowerStemH(id, scale);
 
-  STEM_HEIGHTS.forEach((height, i) => {
-    const color = PETAL_COLORS[i % PETAL_COLORS.length];
+  const plant = document.createElement("div");
+  plant.className = "plant";
+  plant.style.left = flowerX(id) + "%";
+  plant.style.setProperty("--petal",     color);
+  plant.style.setProperty("--h",         height + "px");
+  plant.style.setProperty("--ph",        Math.round(380 * scale) + "px");
+  plant.style.setProperty("--head-size", Math.round(100 * scale) + "px");
+  plant.style.setProperty("--petal-w",   Math.round(24  * scale) + "px");
+  plant.style.setProperty("--petal-h",   Math.round(40  * scale) + "px");
+  plant.style.setProperty("--center-sz", Math.round(26  * scale) + "px");
+  plant.style.setProperty("--growth",    "0");
 
-    const plant = document.createElement("div");
-    plant.className = "plant";
-    plant.id = `${containerId}-plant-${i}`;
-    plant.style.setProperty("--petal",    color);
-    plant.style.setProperty("--h",        Math.round(height * scale) + "px");
-    plant.style.setProperty("--ph",       Math.round(380    * scale) + "px");
-    plant.style.setProperty("--head-size",Math.round(100    * scale) + "px");
-    plant.style.setProperty("--petal-w",  Math.round(24     * scale) + "px");
-    plant.style.setProperty("--petal-h",  Math.round(40     * scale) + "px");
-    plant.style.setProperty("--center-sz",Math.round(26     * scale) + "px");
-    plant.style.setProperty("--growth",   "0");
+  const head  = document.createElement("div");
+  head.className = "flower-head";
+  const inner = document.createElement("div");
+  inner.className = "flower-inner";
+  for (let p = 0; p < NUM_PETALS; p++) {
+    const petal = document.createElement("div");
+    petal.className = "petal";
+    petal.style.setProperty("--angle", (p * (360 / NUM_PETALS)).toString());
+    inner.appendChild(petal);
+  }
+  const center = document.createElement("div");
+  center.className = "flower-center";
+  inner.appendChild(center);
+  head.appendChild(inner);
 
-    const head = document.createElement("div");
-    head.className = "flower-head";
+  const stem = document.createElement("div");
+  stem.className = "stem";
+  const leafL = document.createElement("div"); leafL.className = "leaf l";
+  const leafR = document.createElement("div"); leafR.className = "leaf r";
+  stem.appendChild(leafL);
+  stem.appendChild(leafR);
 
-    const inner = document.createElement("div");
-    inner.className = "flower-inner";
-
-    for (let p = 0; p < NUM_PETALS; p++) {
-      const petal = document.createElement("div");
-      petal.className = "petal";
-      petal.style.setProperty("--angle", (p * (360 / NUM_PETALS)).toString());
-      inner.appendChild(petal);
-    }
-
-    const center = document.createElement("div");
-    center.className = "flower-center";
-    inner.appendChild(center);
-    head.appendChild(inner);
-
-    const stem = document.createElement("div");
-    stem.className = "stem";
-    const leafL = document.createElement("div"); leafL.className = "leaf l";
-    const leafR = document.createElement("div"); leafR.className = "leaf r";
-    stem.appendChild(leafL);
-    stem.appendChild(leafR);
-
-    plant.appendChild(head);
-    plant.appendChild(stem);
-    garden.appendChild(plant);
-    els.push(plant);
-  });
-
-  return els;
+  plant.appendChild(head);
+  plant.appendChild(stem);
+  gardenEl.appendChild(plant);
+  return plant;
 }
 
 // ── WebSocket ────────────────────────────────────────────────
@@ -320,12 +340,19 @@ function updateGame(state) {
   // Phase UI (overlays + badge)
   updatePhaseUI(phase, mode, winner);
 
+  // Timer
+  updateTimer(state.time_remaining ?? 0, phase);
+
+  // Cache for win overlay
+  if (mode === "competitive") lastStateTeams  = state.teams || [];
+  else                         lastStateSingle = state;
+
   // Garden / progress
   if (mode === "competitive") {
     (state.teams || []).forEach(team => updateTeam(team));
   } else {
-    updateProgress(state.progress || 0);
-    updatePlants(state.plants, plantEls);
+    updateProgress(state.score, state.progress);
+    updatePlants(state.plants, SINGLE_GARDEN);
   }
 }
 
@@ -397,22 +424,35 @@ function updateTeamSelect(state) {
   }
 }
 
-// ── Progress bar (single mode) ────────────────────────────────
-function updateProgress(p) {
-  lastProgress = p;
-  const pct = Math.round(p * 100);
-  document.getElementById("progress-fill").style.width   = pct + "%";
-  document.getElementById("progress-label").textContent  = t("progress", pct);
+// ── Score display (single mode) ──────────────────────────────
+function updateProgress(score, progress) {
+  lastProgress = progress;
+  document.getElementById("progress-label").textContent = t("score", score ?? 0);
+}
+
+// ── Countdown timer ───────────────────────────────────────────
+function updateTimer(timeRemaining, phase) {
+  const el = document.getElementById("timer-display");
+  if (phase !== "playing") {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  const secs  = Math.max(0, Math.ceil(timeRemaining));
+  const m     = Math.floor(secs / 60);
+  const s     = secs % 60;
+  el.textContent = `⏱ ${m}:${s.toString().padStart(2, "0")}`;
+  el.classList.toggle("timer-urgent", secs <= 10);
 }
 
 // ── Flowers ──────────────────────────────────────────────────
-function updatePlants(plants, els) {
-  if (!plants || !els) return;
+// g = garden object {el, els, scale}; spawns new flowers automatically.
+function updatePlants(plants, g) {
+  if (!plants || !g || !g.el) return;
   plants.forEach(({ id, growth }) => {
-    const el = els[id];
-    if (!el) return;
-    el.style.setProperty("--growth", growth.toFixed(4));
-    el.classList.toggle("bloomed", growth >= 0.98);
+    if (!g.els[id]) g.els[id] = spawnFlower(g.el, id, g.scale);
+    g.els[id].style.setProperty("--growth", growth.toFixed(4));
+    g.els[id].classList.toggle("bloomed", growth >= 0.98);
   });
 }
 
@@ -425,11 +465,9 @@ function updatePodCount(n) {
 
 // ── Competitive team update ───────────────────────────────────
 function updateTeam(team) {
-  const i   = team.id;
-  const pct = Math.round((team.progress || 0) * 100);
-  document.getElementById(`team-progress-fill-${i}`).style.width    = pct + "%";
-  document.getElementById(`team-progress-label-${i}`).textContent   = t("teamProgress", pct);
-  updatePlants(team.plants, teamPlantEls[i]);
+  const i = team.id;
+  document.getElementById(`team-score-label-${i}`).textContent = t("teamScore", team.score ?? 0);
+  updatePlants(team.plants, TEAM_GARDENS[i]);
 }
 
 // ── Badge ─────────────────────────────────────────────────────
@@ -460,6 +498,7 @@ function updatePhaseUI(phase, mode, winner) {
       delete win.dataset.winner;
       delete win.dataset.confettiDone;
       lastTSCounts = [-1, -1];
+      if (phaseChanged) clearAllGardens();
       break;
 
     case "playing":
@@ -470,15 +509,23 @@ function updatePhaseUI(phase, mode, winner) {
     case "won":
       waiting.classList.add("hidden");
       if (!win.classList.contains("visible") || phaseChanged) {
-        // Set win overlay text
-        if (mode === "competitive" && winner !== null) {
-          win.dataset.winner = winner;
-          document.getElementById("win-title").textContent = t("teamWinsTitle", winner + 1);
-          document.getElementById("win-sub").textContent   = t("teamWinsSub",   winner + 1);
+        if (mode === "competitive") {
+          const teams  = lastStateTeams || [];
+          const s0     = teams.find(t => t.id === 0)?.score ?? 0;
+          const s1     = teams.find(t => t.id === 1)?.score ?? 0;
+          if (winner === null) {
+            document.getElementById("win-title").textContent = t("teamTieTitle");
+            document.getElementById("win-sub").textContent   = t("teamTieSub", s0, s1);
+          } else {
+            win.dataset.winner = winner;
+            document.getElementById("win-title").textContent = t("teamWinsTitle", winner + 1);
+            document.getElementById("win-sub").textContent   = t("teamWinsSub", s0, s1);
+          }
         } else {
+          const score = lastStateSingle?.score ?? 0;
           delete win.dataset.winner;
           document.getElementById("win-title").textContent = t("winTitle");
-          document.getElementById("win-sub").textContent   = t("winSub");
+          document.getElementById("win-sub").textContent   = t("winSub", score);
         }
         win.classList.add("visible");
         if (!win.dataset.confettiDone) {
@@ -493,7 +540,7 @@ function updatePhaseUI(phase, mode, winner) {
 // ── Buttons ──────────────────────────────────────────────────
 function attachButtons() {
   document.getElementById("btn-start").addEventListener("click", () =>
-    sendAction("start", { mode: selectedMode })
+    sendAction("start", { mode: selectedMode, duration: selectedDuration })
   );
   document.getElementById("btn-reset").addEventListener("click", () =>
     sendAction("reset")
@@ -505,7 +552,7 @@ function attachButtons() {
     sendAction("begin_game")
   );
   document.getElementById("facilitator-start").addEventListener("click", () =>
-    sendAction("start", { mode: selectedMode })
+    sendAction("start", { mode: selectedMode, duration: selectedDuration })
   );
 
   // Mode selector
@@ -515,6 +562,15 @@ function attachButtons() {
   document.getElementById("btn-mode-competitive").addEventListener("click", () =>
     selectMode("competitive")
   );
+
+  // Duration selector
+  document.querySelectorAll(".dur-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      selectedDuration = parseInt(btn.dataset.secs);
+      document.querySelectorAll(".dur-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  });
 
   // Language toggle
   document.getElementById("lang-toggle").addEventListener("click", () => {

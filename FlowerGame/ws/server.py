@@ -41,27 +41,28 @@ class FlowerWSServer:
     def _get_state(self) -> dict:
         if self._controller is None:
             return {
-                "mode":         "single",
-                "phase":        "waiting",
-                "progress":     0.0,
-                "total_growth": 0.0,
-                "total_needed": self._config.total_growth_needed,
-                "num_devices":  0,
-                "devices":      {},
-                "plants":       [{"id": i, "growth": 0.0}
-                                 for i in range(self._config.num_plants)],
+                "mode":           "single",
+                "phase":          "waiting",
+                "time_remaining": 0.0,
+                "duration":       self._config.default_duration,
+                "score":          0.0,
+                "progress":       0.0,
+                "num_devices":    0,
+                "devices":        {},
+                "plants":         [],
             }
         return self._controller.get_state()
 
     def _handle_action(self, msg: dict) -> None:
-        action = msg.get("action")
+        action   = msg.get("action")
+        duration = int(msg.get("duration", self._config.default_duration))
         if action == "start":
             mode = msg.get("mode", "single")
             if mode == "competitive":
                 self._controller = CompetitiveFlowerController(self._config)
             else:
                 self._controller = FlowerController(self._config)
-            self._controller.start_session()
+            self._controller.start_session(duration)
         elif action == "next_team":
             if hasattr(self._controller, "next_team"):
                 self._controller.next_team()
@@ -69,7 +70,7 @@ class FlowerWSServer:
             if hasattr(self._controller, "begin_game"):
                 self._controller.begin_game()
         elif action == "reset":
-            self._controller = None   # return to waiting; user picks mode again
+            self._controller = None
 
     # ── WebSocket handler ─────────────────────────────────────
 

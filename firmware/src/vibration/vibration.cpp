@@ -80,6 +80,13 @@ static void vibration_task(void* pv) {
             pulse(VIBRATION_DUTY_FULL,  80, 200);
             motor_on(VIBRATION_DUTY_FULL, 600);
             break;
+
+        case VIBR_FLOWER_50:
+            // Every 50 flowers — happy da-da-DUM  ·· —
+            pulse(VIBRATION_DUTY_FULL, 100,  80);
+            pulse(VIBRATION_DUTY_FULL, 100,  80);
+            motor_on(VIBRATION_DUTY_FULL, 350);
+            break;
     }
 
     motor_off(0);
