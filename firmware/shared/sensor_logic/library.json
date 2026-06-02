@@ -1,0 +1,5 @@
+{
+  "name": "sensor_logic",
+  "version": "1.0.0",
+  "description": "LIS3DHTR accelerometer driver — Arduino I2C, platform-agnostic"
+}

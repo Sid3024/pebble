@@ -1,0 +1,5 @@
+{
+  "name": "scoring_logic",
+  "version": "1.0.0",
+  "description": "FreeRTOS windowed magnitude accumulator — platform-agnostic"
+}

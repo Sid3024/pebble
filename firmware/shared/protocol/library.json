@@ -1,0 +1,5 @@
+{
+  "name": "protocol",
+  "version": "1.0.0",
+  "description": "Shared BLE UUIDs, device naming and vibration pattern constants"
+}

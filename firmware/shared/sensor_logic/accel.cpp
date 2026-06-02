@@ -1,0 +1,20 @@
+#include "accel.h"
+#include "LIS3DHTR.h"
+#include <Wire.h>
+
+static LIS3DHTR<TwoWire> s_lis;
+
+bool accel_init(uint8_t i2c_addr) {
+    s_lis.begin(Wire, i2c_addr);
+    if (!s_lis) return false;
+
+    s_lis.setOutputDataRate(LIS3DHTR_DATARATE_100HZ);
+    s_lis.setHighSolution(true);   // 12-bit resolution
+    return true;
+}
+
+bool accel_read(float &ax, float &ay, float &az) {
+    if (!s_lis.isConnection()) return false;
+    s_lis.getAcceleration(&ax, &ay, &az);
+    return true;
+}
