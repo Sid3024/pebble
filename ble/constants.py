@@ -3,7 +3,12 @@ SERVICE_UUID      = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WINDOW_CHAR_UUID  = "a1b2c3d4-e5f6-7890-abcd-ef1234567891"
 COMMAND_CHAR_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567892"
 
-PEBBLE_NAME_PREFIX = "Pebble_"
+PEBBLE_NAME_PREFIX     = "Pebble_"
+PEBBLE_LED_NAME_PREFIX = "PebbleLED_"
+
+# LED display MCU UUIDs — must match LEDLight/src/config/led_config.h
+LED_SERVICE_UUID = "b1c2d3e4-f5a6-7890-abcd-ef1234567890"
+LED_CMD_UUID     = "b1c2d3e4-f5a6-7890-abcd-ef1234567891"
 
 # Vibration pattern IDs — must match firmware/src/vibration/vibration.h exactly.
 VIBR_TEAM1      = 1   # 5 s team-1 assignment  (quick triple tap)

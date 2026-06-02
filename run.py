@@ -60,6 +60,21 @@ async def _simulate_ble(controller, num_pods: int) -> None:
     await run_simulated_pods(controller, num_pods=num_pods)
 
 
+async def _connect_led(state_getter, scan_timeout: float) -> None:
+    from ble.scanner import scan_for_led_display
+    from LEDLight.client import LEDClient
+
+    print(f"[LED] Scanning for LED display ({scan_timeout}s)...")
+    devices = await scan_for_led_display(timeout=scan_timeout)
+
+    if not devices:
+        print("[LED] No LED display found — running without light strip.")
+        return
+
+    print(f"[LED] Found: {devices[0].name}")
+    await LEDClient(devices[0]).run(state_getter)
+
+
 # ── Game builders ─────────────────────────────────────────────────────────────
 
 def _build_flower():
@@ -86,16 +101,17 @@ def _build_hub():
 # ── Mode runners ──────────────────────────────────────────────────────────────
 
 async def run_flower(simulate: bool, sim_pods: int) -> None:
-    controller, ws_coro, config = _build_flower()
+    server, ws_coro, config = _build_flower()
 
     ble_coro = (
-        _simulate_ble(controller, sim_pods)
+        _simulate_ble(server, sim_pods)
         if simulate
-        else _connect_ble(controller, config.ble_scan_timeout)
+        else _connect_ble(server, config.ble_scan_timeout)
     )
+    led_coro = _connect_led(server.get_game_state, config.ble_scan_timeout)
 
     print("  Open GameDashboard/index.html in your browser, then click Start.")
-    await asyncio.gather(ws_coro, ble_coro)
+    await asyncio.gather(ws_coro, ble_coro, led_coro)
 
 
 async def run_volume(simulate: bool, sim_pods: int) -> None:
@@ -108,20 +124,21 @@ async def run_volume(simulate: bool, sim_pods: int) -> None:
 
 
 async def run_both(simulate: bool, sim_pods: int) -> None:
-    flower_ctrl, ws_coro, flower_cfg = _build_flower()
+    flower_server, ws_coro, flower_cfg = _build_flower()
     hub_ctrl = _build_hub()
 
-    multi = MultiController(flower_ctrl, hub_ctrl)
+    multi = MultiController(flower_server, hub_ctrl)
 
     ble_coro = (
         _simulate_ble(multi, sim_pods)
         if simulate
         else _connect_ble(multi, flower_cfg.ble_scan_timeout)
     )
+    led_coro = _connect_led(flower_server.get_game_state, flower_cfg.ble_scan_timeout)
 
     print("  Open GameDashboard/index.html in your browser.")
     print("  Music volume + flowers both respond to pod movement.")
-    await asyncio.gather(ws_coro, ble_coro)
+    await asyncio.gather(ws_coro, ble_coro, led_coro)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
