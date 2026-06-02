@@ -32,6 +32,10 @@ class FlowerWSServer:
         if self._controller is not None:
             self._controller.process_window(device_name, window_sum)
 
+    def get_game_state(self) -> dict:
+        """Public accessor for the current game state (used by LEDClient)."""
+        return self._get_state()
+
     def pop_vibration_commands(self, device_name: str) -> list[int]:
         fn = getattr(self._controller, "pop_vibration_commands", None)
         return fn(device_name) if fn else []
