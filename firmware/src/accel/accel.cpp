@@ -14,7 +14,10 @@ bool accel_init() {
 }
 
 bool accel_read(float &ax, float &ay, float &az) {
-    if (!s_lis.isConnection()) return false;
+    if (!s_lis.isConnection()) {
+        Serial.println("[ACCEL] isConnection() false — read skipped");
+        return false;
+    }
     s_lis.getAcceleration(&ax, &ay, &az);
     return true;
 }
