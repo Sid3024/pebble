@@ -6,37 +6,115 @@
 #include "ble/ble.h"
 #include "vibration/vibration.h"
 
+static bool s_accel_ok = false;
+
+// ── I2C pin mapping ───────────────────────────────────────────
+// Resolved once so recovery and init use the same pins.
+#if USE_EXPANSION_BOARD
+  static const int PIN_SCL = SCL;
+  static const int PIN_SDA = SDA;
+#else
+  static const int PIN_SCL = I2C_SCL;
+  static const int PIN_SDA = I2C_SDA;
+#endif
+
+// ── I2C bus recovery ──────────────────────────────────────────
+// Clocks SCL 9 times so any slave stuck holding SDA low (due to an
+// interrupted transaction) releases the line, then sends a STOP.
+// Defined in the I2C specification section 3.1.16.
+static void i2c_recover() {
+    Wire.end();
+
+    pinMode(PIN_SCL, OUTPUT_OPEN_DRAIN);
+    pinMode(PIN_SDA, OUTPUT_OPEN_DRAIN);
+    digitalWrite(PIN_SDA, HIGH);
+    digitalWrite(PIN_SCL, HIGH);
+
+    for (int i = 0; i < 9; i++) {
+        digitalWrite(PIN_SCL, LOW);  delayMicroseconds(10);
+        digitalWrite(PIN_SCL, HIGH); delayMicroseconds(10);
+        if (digitalRead(PIN_SDA)) break;   // SDA released — done
+    }
+    // STOP condition: SDA rises while SCL is HIGH
+    digitalWrite(PIN_SDA, LOW);  delayMicroseconds(10);
+    digitalWrite(PIN_SCL, HIGH); delayMicroseconds(10);
+    digitalWrite(PIN_SDA, HIGH); delayMicroseconds(10);
+
+    // Re-initialise Wire with the correct pins
+#if USE_EXPANSION_BOARD
+    Wire.begin();
+#else
+    Wire.begin(I2C_SDA, I2C_SCL);
+#endif
+    delay(30);
+    if (Serial) Serial.println("[I2C] bus recovery done");
+}
+
+// ── I2C scan ──────────────────────────────────────────────────
+static void i2c_scan() {
+    if (!Serial) return;
+    Serial.println("[I2C] Scanning 0x01–0x7F ...");
+    uint8_t found = 0;
+    for (uint8_t addr = 1; addr < 128; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("[I2C]   device at 0x%02X\n", addr);
+            found++;
+        }
+    }
+    if (found == 0) Serial.println("[I2C]   no devices found");
+    else            Serial.printf("[I2C] %d device(s) found\n", found);
+}
+
+// ── Accelerometer init with retry + recovery ──────────────────
+static bool accel_init_robust(int max_tries = 5) {
+    for (int n = 1; n <= max_tries; n++) {
+        delay(60);   // LIS3DHTR needs ~5 ms after power-on; 60 ms is safe
+        if (accel_init()) {
+            if (Serial) Serial.printf("[ACCEL] ready on try %d\n", n);
+            return true;
+        }
+        if (Serial) Serial.printf("[ACCEL] not found (try %d/%d) — recovering bus\n", n, max_tries);
+        i2c_recover();
+    }
+    if (Serial) Serial.println("[ACCEL] failed after all attempts — check wiring & USE_EXPANSION_BOARD");
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────
+
 void setup() {
     Serial.begin(115200);
-    // Wait up to 2s for USB CDC — skipped automatically on battery power.
     while (!Serial && millis() < 2000) delay(10);
 
 #if USE_EXPANSION_BOARD
     Wire.begin();
-    Serial.println("[INFO] I2C: expansion board (default pins)");
+    if (Serial) Serial.println("[INFO] I2C: expansion board");
 #else
     Wire.begin(I2C_SDA, I2C_SCL);
-    Serial.printf("[INFO] I2C: direct wiring SDA=D%d SCL=D%d\n", I2C_SDA, I2C_SCL);
+    if (Serial) Serial.printf("[INFO] I2C: direct wiring D%d/D%d\n", I2C_SDA, I2C_SCL);
 #endif
 
-    if (!accel_init()) {
-        Serial.println("[ERROR] LIS3DHTR not found. Check wiring and I2C address.");
-        while (true) delay(1000);
-    }
+    i2c_scan();
+    s_accel_ok = accel_init_robust();
 
     vibration_init();
     ble_set_command_callback([](uint8_t id) { vibration_play(id); });
     ble_init();
-    window_task_start();
 
-    Serial.printf("[INFO] Sampling at %d Hz, window = %d s (%d samples)\n",
-                  SAMPLE_RATE_HZ, WINDOW_DURATION_S, SAMPLES_PER_WINDOW);
+    if (s_accel_ok) {
+        window_task_start();
+        if (Serial) Serial.printf("[INFO] %d Hz sampling, %d s window\n",
+                                  SAMPLE_RATE_HZ, WINDOW_DURATION_S);
+    }
 }
 
 void loop() {
+    if (!s_accel_ok) { delay(1000); return; }
+
     float sum;
     while (window_pop(sum)) {
-        Serial.printf("[WINDOW] sum = %.4f g  connected=%d\n", sum, ble_connected());
+        if (Serial) Serial.printf("[WINDOW] %.4f g  conn=%d\n", sum, ble_connected());
         ble_send_window(sum);
     }
     delay(100);

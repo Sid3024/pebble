@@ -59,13 +59,8 @@ class TeamState:
         }
 
     def _compute_plants(self) -> list[dict]:
-        pts      = self._config.sprout_points_per_plant
-        num_full = int(self._score / pts)
-        partial  = (self._score % pts) / pts
-        plants   = [{"id": i, "growth": 1.0} for i in range(num_full)]
-        if partial > 0.001:
-            plants.append({"id": num_full, "growth": round(partial, 4)})
-        return plants
+        num_full = int(self._score / self._config.sprout_points_per_plant)
+        return [{"id": i, "growth": 1.0} for i in range(num_full)]
 
     def reset(self) -> None:
         self._trackers.clear()
