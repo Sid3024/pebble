@@ -4,13 +4,22 @@
 
 static LIS3DHTR<TwoWire> s_lis;
 
-bool accel_init() {
-    s_lis.begin(Wire, ACCEL_I2C_ADDR);
-    if (!s_lis) return false;
+// Try both common LIS3DHTR addresses at runtime so no recompile is needed
+// when swapping between the expansion board (SA0=VCC → 0x19) and direct
+// wiring (SA0=GND → 0x18).
+static const uint8_t CANDIDATE_ADDRS[] = { 0x19, 0x18 };
 
-    s_lis.setOutputDataRate(LIS3DHTR_DATARATE_100HZ);
-    s_lis.setHighSolution(true);  // 12-bit resolution
-    return true;
+bool accel_init() {
+    for (uint8_t addr : CANDIDATE_ADDRS) {
+        s_lis.begin(Wire, addr);
+        if (s_lis) {
+            s_lis.setOutputDataRate(LIS3DHTR_DATARATE_100HZ);
+            s_lis.setHighSolution(true);   // 12-bit resolution
+            Serial.printf("[ACCEL] LIS3DHTR found at 0x%02X\n", addr);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool accel_read(float &ax, float &ay, float &az) {

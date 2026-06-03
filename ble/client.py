@@ -1,7 +1,10 @@
 import asyncio
 import struct
 
+from typing import Any
+
 from bleak import BleakClient
+from bleak.backends.device import BLEDevice
 
 from .constants import WINDOW_CHAR_UUID, COMMAND_CHAR_UUID
 
@@ -19,8 +22,8 @@ class PebbleClient:
     - Auto-reconnects on disconnect or error.
     """
 
-    def __init__(self, device, controller) -> None:
-        self._device     = device
+    def __init__(self, device: BLEDevice, controller: Any) -> None:
+        self._device: BLEDevice = device
         self.name        = device.name
         self._controller = controller
 
@@ -51,9 +54,13 @@ class PebbleClient:
 
     async def run(self) -> None:
         RETRY_DELAY = 5.0
+        # Use the address string, not the device object — each reconnect then
+        # performs fresh GATT discovery instead of reusing a stale cached profile,
+        # which avoids silent failures when the MCU reboots mid-session.
+        address = self._device.address
         while True:
             try:
-                async with BleakClient(self._device) as client:
+                async with BleakClient(address, timeout=20.0) as client:
                     print(f"[{self.name}] connected")
                     await client.start_notify(WINDOW_CHAR_UUID, self._on_window)
                     print(f"[{self.name}] subscribed to window notifications")

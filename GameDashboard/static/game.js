@@ -91,16 +91,58 @@ function t(key, ...args) {
   return typeof val === "function" ? val(...args) : val;
 }
 
-// ── Flower configuration ─────────────────────────────────────
-const PETAL_COLORS = [
-  "#FF5FA8", "#CC66DD", "#FF7030", "#FFD000", "#8855CC", "#FF3D6A",
-];
-const NUM_PETALS = 8;
+// ── Flower sprites (from flower_sprites_v3.svg) ───────────────
+// 10 colour variations: Sunny, Blush, Lavender, Coral, Sky,
+//                       Mint,  Peach, Crimson,  Violet, Butter
+// ViewBox "-60 -80 120 290" captures full flower (petals at y≈-70,
+// stem bottom at y≈200).  Stem is drawn first so petals sit on top.
 
-// Golden ratio — gives a beautiful spread with no clustering as count grows.
+function _makeFlower(pA, pB, ps, co, ci, cs) {
+  const pts = Array.from({length:12}, (_,i) =>
+    `<ellipse cx="0" cy="-44" rx="11" ry="26" fill="${i%2?pB:pA}" stroke="${ps}" stroke-width="1.6" transform="rotate(${i*30})"  />`
+  ).join('');
+  return `<rect x="-5" y="18" width="10" height="182" rx="5" fill="#5cb040" stroke="#2a6020" stroke-width="1.8"/>
+<g transform="translate(-18,110) rotate(-40)"><ellipse cx="0" cy="0" rx="24" ry="11" fill="#6cc848" stroke="#2a6020" stroke-width="1.6"/></g>
+<g transform="translate(18,130) rotate(40)"><ellipse cx="0" cy="0" rx="24" ry="11" fill="#6cc848" stroke="#2a6020" stroke-width="1.6"/></g>
+${pts}
+<circle cx="0" cy="0" r="21" fill="${co}" stroke="${cs}" stroke-width="2.2"/>
+<circle cx="0" cy="0" r="13" fill="${ci}" stroke="${cs}" stroke-width="1.2"/>
+<circle cx="-4" cy="-4" r="2.2" fill="#503020" opacity="0.6"/>
+<circle cx="4"  cy="-2" r="1.8" fill="#503020" opacity="0.5"/>
+<circle cx="0"  cy="5"  r="1.8" fill="#503020" opacity="0.5"/>`;
+}
+
+const FLOWER_TYPES = [
+  { color:'#f5a800', svg:_makeFlower('#ffe040','#ffd828','#c89000','#f5a800','#ffc840','#a06000') }, // Sunny
+  { color:'#e8507a', svg:_makeFlower('#ffb8cc','#ff90aa','#c04880','#e8507a','#ff80a0','#900040') }, // Blush
+  { color:'#b880e0', svg:_makeFlower('#d4aaee','#b880e0','#7040b0','#f5c000','#ffe060','#a07000') }, // Lavender
+  { color:'#ff6040', svg:_makeFlower('#ff8060','#ff5a30','#c04020','#fff0d0','#ffffff','#c06020') }, // Coral
+  { color:'#70b8f0', svg:_makeFlower('#a8d8f8','#70b8f0','#3070c0','#f8e060','#fff5a0','#c09800') }, // Sky
+  { color:'#70ddb8', svg:_makeFlower('#b0f0d8','#70ddb8','#208060','#f0f8f0','#ffffff','#208060') }, // Mint
+  { color:'#ffb070', svg:_makeFlower('#ffd0a0','#ffb070','#d06820','#f07820','#ffa040','#904000') }, // Peach
+  { color:'#e82030', svg:_makeFlower('#e82030','#b00018','#800010','#d0a000','#f0c820','#806000') }, // Crimson
+  { color:'#9060d8', svg:_makeFlower('#9060d8','#6030b0','#400890','#c8e020','#e8f840','#607000') }, // Violet
+  { color:'#f0e080', svg:_makeFlower('#fff8c0','#f0e080','#c09040','#c06818','#e08030','#804010') }, // Butter
+];
+
+// Flower display dimensions at scale=1.0
+const FLOWER_W  = 80;          // px width
+const FLOWER_H  = 210;         // px height (stem bottom → petal tips)
+const FLOWER_VB = "-60 -80 120 290";
+
+// Dummy placeholder kept to avoid breaking old references
+const FLOWER_BASE_PX = FLOWER_W;
+
+
+// Golden ratio positioning — beautiful spread, no clustering
 const φ = 0.618033988749895;
-function flowerX(id)          { return ((id * φ)         % 1) * 86 + 7; }  // 7–93 %
-function flowerStemH(id, scl) { return Math.round((140 + ((id * φ * 2.3) % 1) * 130) * scl); }
+// X: 8–92% — covers the full usable width of each garden panel
+function flowerX(id) { return ((id * φ) % 1) * 84 + 8; }
+
+// Y: 1–44% from the bottom of the garden container — spreads across the full height
+// Uses a complementary golden-ratio multiplier so X and Y are uncorrelated
+function flowerY(id) { return ((id * 0.381966 * 2.3) % 1) * 43 + 1; }
+
 
 // ── Background tree configuration ────────────────────────────
 const TREE_DEFS = [
@@ -137,7 +179,6 @@ document.addEventListener("DOMContentLoaded", () => {
   SINGLE_GARDEN.el   = document.getElementById("garden");
   TEAM_GARDENS[0].el = document.getElementById("garden-0");
   TEAM_GARDENS[1].el = document.getElementById("garden-1");
-  buildTrees();
   attachButtons();
   connect();
 });
@@ -249,45 +290,31 @@ function buildTrees() {
 
 // ── Spawn one flower into a garden container ──────────────────
 function spawnFlower(gardenEl, id, scale) {
-  const color  = PETAL_COLORS[id % PETAL_COLORS.length];
-  const height = flowerStemH(id, scale);
+  const typeIndex = id % FLOWER_TYPES.length;
+  const w = Math.round(FLOWER_W * scale);
+  const h = Math.round(FLOWER_H * scale);
 
   const plant = document.createElement("div");
   plant.className = "plant";
-  plant.style.left = flowerX(id) + "%";
-  plant.style.setProperty("--petal",     color);
-  plant.style.setProperty("--h",         height + "px");
-  plant.style.setProperty("--ph",        Math.round(380 * scale) + "px");
-  plant.style.setProperty("--head-size", Math.round(100 * scale) + "px");
-  plant.style.setProperty("--petal-w",   Math.round(24  * scale) + "px");
-  plant.style.setProperty("--petal-h",   Math.round(40  * scale) + "px");
-  plant.style.setProperty("--center-sz", Math.round(26  * scale) + "px");
-  plant.style.setProperty("--growth",    "0");
+  plant.style.left   = flowerX(id) + "%";
+  plant.style.bottom = flowerY(id) + "%";   // vertical spread across garden
+  plant.dataset.type = typeIndex;
+  plant.dataset.h    = h;
 
-  const head  = document.createElement("div");
-  head.className = "flower-head";
-  const inner = document.createElement("div");
-  inner.className = "flower-inner";
-  for (let p = 0; p < NUM_PETALS; p++) {
-    const petal = document.createElement("div");
-    petal.className = "petal";
-    petal.style.setProperty("--angle", (p * (360 / NUM_PETALS)).toString());
-    inner.appendChild(petal);
-  }
-  const center = document.createElement("div");
-  center.className = "flower-center";
-  inner.appendChild(center);
-  head.appendChild(inner);
+  // Clip container starts at height 0; animated to h after insertion
+  const clip = document.createElement("div");
+  clip.className = "plant-clip";
+  clip.style.cssText = `width:${w}px; height:0px; position:relative; overflow:hidden;`;
 
-  const stem = document.createElement("div");
-  stem.className = "stem";
-  const leafL = document.createElement("div"); leafL.className = "leaf l";
-  const leafR = document.createElement("div"); leafR.className = "leaf r";
-  stem.appendChild(leafL);
-  stem.appendChild(leafR);
+  // SVG anchored to bottom so stem appears first as clip grows
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", FLOWER_VB);
+  svg.style.cssText =
+    `width:${w}px; height:${h}px; position:absolute; bottom:0; display:block; overflow:visible;`;
+  svg.innerHTML = FLOWER_TYPES[typeIndex].svg;
 
-  plant.appendChild(head);
-  plant.appendChild(stem);
+  clip.appendChild(svg);
+  plant.appendChild(clip);
   gardenEl.appendChild(plant);
   return plant;
 }
@@ -446,13 +473,23 @@ function updateTimer(timeRemaining, phase) {
 }
 
 // ── Flowers ──────────────────────────────────────────────────
-// g = garden object {el, els, scale}; spawns new flowers automatically.
 function updatePlants(plants, g) {
   if (!plants || !g || !g.el) return;
   plants.forEach(({ id, growth }) => {
-    if (!g.els[id]) g.els[id] = spawnFlower(g.el, id, g.scale);
-    g.els[id].style.setProperty("--growth", growth.toFixed(4));
-    g.els[id].classList.toggle("bloomed", growth >= 0.98);
+    if (!g.els[id]) {
+      const el   = spawnFlower(g.el, id, g.scale);
+      g.els[id]  = el;
+      const clip = el.querySelector(".plant-clip");
+      const h    = parseInt(el.dataset.h);
+      // Double rAF: browser must paint height:0 before we set the target height,
+      // otherwise the CSS transition has no starting point and the flower just pops.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (clip) clip.style.height = h + "px";
+        el.classList.toggle("bloomed", growth >= 0.98);
+      }));
+    } else {
+      g.els[id].classList.toggle("bloomed", growth >= 0.98);
+    }
   });
 }
 

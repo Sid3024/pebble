@@ -61,18 +61,32 @@ async def _simulate_ble(controller, num_pods: int) -> None:
 
 
 async def _connect_led(state_getter, scan_timeout: float) -> None:
-    from ble.scanner import scan_for_led_display
-    from LEDLight.client import LEDClient
+    # Delay until the game-pod scan has finished — two concurrent
+    # BleakScanner.discover() calls on Windows conflict and return nothing.
+    await asyncio.sleep(scan_timeout + 2.0)
 
-    print(f"[LED] Scanning for LED display ({scan_timeout}s)...")
-    devices = await scan_for_led_display(timeout=scan_timeout)
+    try:
+        from ble.scanner import scan_for_led_display
+        from LEDLight.client import LEDClient
+    except ImportError:
+        return   # LEDLight module not present
+
+    try:
+        print(f"[LED] Scanning for LED display ({scan_timeout}s)...")
+        devices = await scan_for_led_display(timeout=scan_timeout)
+    except Exception as exc:
+        print(f"[LED] Scan failed: {exc}")
+        return
 
     if not devices:
         print("[LED] No LED display found — running without light strip.")
         return
 
     print(f"[LED] Found: {devices[0].name}")
-    await LEDClient(devices[0]).run(state_getter)
+    try:
+        await LEDClient(devices[0]).run(state_getter)
+    except Exception as exc:
+        print(f"[LED] Client error: {exc}")
 
 
 # ── Game builders ─────────────────────────────────────────────────────────────

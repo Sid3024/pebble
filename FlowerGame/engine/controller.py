@@ -195,10 +195,7 @@ class FlowerController:
             self._pending_vibrations.setdefault(name, []).append(pattern_id)
 
     def _compute_plants(self) -> list[dict]:
-        pts      = self._config.sprout_points_per_plant
-        num_full = int(self._score / pts)
-        partial  = (self._score % pts) / pts   # fractional bloom of the next flower
-        plants   = [{"id": i, "growth": 1.0} for i in range(num_full)]
-        if partial > 0.001:
-            plants.append({"id": num_full, "growth": round(partial, 4)})
-        return plants
+        # Only return fully bloomed flowers — no partial growth values.
+        # The frontend animates each flower from 0→1 when it first appears.
+        num_full = int(self._score / self._config.sprout_points_per_plant)
+        return [{"id": i, "growth": 1.0} for i in range(num_full)]
