@@ -33,6 +33,12 @@ static void sampling_task(void *) {
         window_sum += mag;
         sample_count++;
 
+        // Print first sample so we can confirm accel is delivering data
+        if (sample_count == 1 && window_sum < 2.0f) {
+            Serial.printf("[ACCEL] first sample: ax=%.3f ay=%.3f az=%.3f mag=%.3f\n",
+                          ax, ay, az, mag);
+        }
+
         if (sample_count >= SAMPLES_PER_WINDOW) {
             // Commit the completed window to the ring buffer.
             xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -42,6 +48,7 @@ static void sampling_task(void *) {
             if (s_count < WINDOW_BUFFER_SIZE) s_count++;
             xSemaphoreGive(s_mutex);
 
+            Serial.printf("[WINDOW] committed sum=%.2f\n", s_buf[(s_head + WINDOW_BUFFER_SIZE - 1) % WINDOW_BUFFER_SIZE]);
             window_sum   = 0.0f;
             sample_count = 0;
         }
