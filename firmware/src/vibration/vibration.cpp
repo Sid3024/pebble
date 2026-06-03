@@ -103,13 +103,12 @@ void vibration_init() {
 }
 
 void vibration_play(uint8_t pattern_id) {
-    // Called from BLE callback — must return immediately.
-    // Serial.printf removed: on battery (no USB host) it blocks the BLE task.
     if (s_task != nullptr) {
         vTaskDelete(s_task);
         s_task = nullptr;
         ledcWrite(VIBRATION_LEDC_CHANNEL, 0);
     }
+    Serial.printf("[VIBR] pattern %d\n", pattern_id);
     xTaskCreate(vibration_task, "vibr", 2048,
                 (void*)(uintptr_t)pattern_id, 3, &s_task);
 }

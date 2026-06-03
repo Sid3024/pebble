@@ -1,12 +1,12 @@
 #pragma once
 #include <Arduino.h>
+#include "config/board_config.h"
 
 /**
- * LIS3DHTR driver wrapper.
+ * Low-level LIS3DHTR driver wrapper.
+ * Handles init and single-sample reads over I2C.
  *
- * accel_init() auto-detects the I2C address (tries 0x19 then 0x18),
- * so no recompile is needed when swapping between the expansion board
- * and direct wiring.  Call Wire.begin() before accel_init().
+ * I2C address and pins are controlled by config/board_config.h.
  */
 
 bool accel_init();
