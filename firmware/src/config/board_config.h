@@ -11,8 +11,7 @@
 //
 //   0 — Direct wiring to MCU pins
 //         SDA → D4   SCL → D5
-//         Accelerometer SA0 floating/GND → address 0x18
-//         (if your module pulls SA0 high, change ACCEL_I2C_ADDR to 0x19)
+//         Accelerometer SA0 pulled HIGH → address 0x19
 // ================================================================
 #define USE_EXPANSION_BOARD 0 // 0-> direct wiring, 1 -> i2c via exp board
 
@@ -40,6 +39,6 @@
 #else
     #define I2C_SDA         D4
     #define I2C_SCL         D5
-    #define ACCEL_I2C_ADDR  0x18
+    #define ACCEL_I2C_ADDR  0x19
 #endif
 
