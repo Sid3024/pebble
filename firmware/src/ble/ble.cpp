@@ -10,9 +10,12 @@
 #define WINDOW_CHAR_UUID  "a1b2c3d4-e5f6-7890-abcd-ef1234567891"
 #define COMMAND_CHAR_UUID "a1b2c3d4-e5f6-7890-abcd-ef1234567892"
 
-static BLECharacteristic* s_window_char = nullptr;
-static bool               s_connected   = false;
-static ble_command_cb_t   s_command_cb  = nullptr;
+static BLECharacteristic* s_window_char    = nullptr;
+static bool               s_connected      = false;
+static ble_command_cb_t   s_command_cb     = nullptr;
+static uint32_t           s_last_notify_ms = 0;
+
+#define KEEPALIVE_INTERVAL_MS 3000
 
 // ── Callbacks ─────────────────────────────────────────────────
 
@@ -82,6 +85,17 @@ void ble_send_window(float window_sum) {
     if (!s_connected || !s_window_char) return;
     s_window_char->setValue(reinterpret_cast<uint8_t*>(&window_sum), sizeof(float));
     s_window_char->notify();
+    s_last_notify_ms = millis();
+}
+
+void ble_keepalive() {
+    if (!s_connected || !s_window_char) return;
+    if (millis() - s_last_notify_ms < KEEPALIVE_INTERVAL_MS) return;
+    // Send a zero-value notification to keep the connection alive
+    float zero = 0.0f;
+    s_window_char->setValue(reinterpret_cast<uint8_t*>(&zero), sizeof(float));
+    s_window_char->notify();
+    s_last_notify_ms = millis();
 }
 
 bool ble_connected() { return s_connected; }

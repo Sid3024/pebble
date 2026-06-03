@@ -66,5 +66,6 @@ void loop() {
         Serial.printf("[WINDOW] sum = %.4f g  connected=%d\n", sum, ble_connected());
         ble_send_window(sum);
     }
+    ble_keepalive();
     delay(100);
 }
