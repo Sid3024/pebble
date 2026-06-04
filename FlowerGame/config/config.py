@@ -18,7 +18,7 @@ class FlowerConfig:
 
     # --- Timed game ---
     # Duration options shown in the UI (seconds). Adjust to taste.
-    game_durations: tuple[int, ...] = (60, 120, 180, 300)   # 1 / 2 / 3 / 5 min
+    game_durations: tuple[int, ...] = (30, 60, 120, 300)   # 30 s / 1 / 2 / 5 min
     default_duration: int = 120                    # pre-selected option
 
     # --- Sprout rate ---

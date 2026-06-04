@@ -5,14 +5,12 @@ from dataclasses import dataclass, field
 
 from ..config.config import FlowerConfig
 from effort.baseline import BaselineCalculator, expected_effort
-from ble.constants import VIBR_MILESTONE1, VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_WIN, VIBR_FLOWER_50
+from ble.constants import VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_WIN, VIBR_FLOWER_50, VIBR_LAST_10
 
 # Time-elapsed thresholds (fraction of total duration) that trigger vibration.
-# 0.25 = 25 % of time has passed, etc.
 _TIME_MILESTONES = [
-    (0.25, VIBR_MILESTONE1),
-    (0.50, VIBR_MILESTONE2),
-    (0.75, VIBR_MILESTONE3),
+    (0.50, VIBR_MILESTONE2),   # 50 % elapsed
+    (0.75, VIBR_MILESTONE3),   # 75 % elapsed
 ]
 
 
@@ -84,7 +82,8 @@ class FlowerController:
         self._start_time: float = 0.0
         self._milestones_hit: set[float] = set()
         self._pending_vibrations: dict[str, list[int]] = {}
-        self._flower_milestone: int = 0   # tracks how many 50-flower marks passed
+        self._flower_milestone: int = 0
+        self._last10_sent:      bool = False
 
     # ── Time ──────────────────────────────────────────────────
 
@@ -137,6 +136,7 @@ class FlowerController:
         self._milestones_hit.clear()
         self._pending_vibrations.clear()
         self._flower_milestone = 0
+        self._last10_sent      = False
         print(f"[GARDEN] Session started — {duration_seconds}s timer.")
 
     def reset(self) -> None:
@@ -148,6 +148,7 @@ class FlowerController:
         self._milestones_hit.clear()
         self._pending_vibrations.clear()
         self._flower_milestone = 0
+        self._last10_sent      = False
         print("[GARDEN] Session reset.")
 
     def pop_vibration_commands(self, device_name: str) -> list[int]:
@@ -189,6 +190,12 @@ class FlowerController:
             self._flower_milestone = current
             self._queue_vibration_all(VIBR_FLOWER_50)
             print(f"[GARDEN] {current * 50} flowers — happy vibration!")
+
+        # Last 10 seconds warning (fires once)
+        if not self._last10_sent and 0 < self.time_remaining <= 10.0:
+            self._last10_sent = True
+            self._queue_vibration_all(VIBR_LAST_10)
+            print("[GARDEN] Last 10 s — anxious vibration!")
 
     def _queue_vibration_all(self, pattern_id: int) -> None:
         for name in self._trackers:
