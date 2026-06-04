@@ -5,7 +5,7 @@ import time
 
 from ..config.config import FlowerConfig
 from .controller import PersonGrowthTracker, _TIME_MILESTONES
-from ble.constants import (VIBR_TEAM1, VIBR_TEAM2, VIBR_WIN, VIBR_FLOWER_50)
+from ble.constants import (VIBR_TEAM1, VIBR_TEAM2, VIBR_WIN, VIBR_FLOWER_50, VIBR_LAST_10)
 
 
 class TeamState:
@@ -95,6 +95,7 @@ class CompetitiveFlowerController:
         self._duration:    float     = 0.0
         self._start_time:  float     = 0.0
         self._milestones_hit: set[float] = set()
+        self._last10_sent: bool      = False
 
     # ── Time ──────────────────────────────────────────────────
 
@@ -127,6 +128,7 @@ class CompetitiveFlowerController:
         self._duration            = float(duration_seconds)
         self._start_time          = 0.0   # timer starts in begin_game()
         self._milestones_hit.clear()
+        self._last10_sent         = False
         print("[GARDEN] Competitive session — team selection started (Team 1).")
 
     def next_team(self) -> None:
@@ -155,6 +157,7 @@ class CompetitiveFlowerController:
         self._duration            = 0.0
         self._start_time          = 0.0
         self._milestones_hit.clear()
+        self._last10_sent         = False
         print("[GARDEN] Competitive session reset.")
 
     def pop_vibration_commands(self, device_name: str) -> list[int]:
@@ -249,10 +252,17 @@ class CompetitiveFlowerController:
         for threshold, pattern_id in _TIME_MILESTONES:
             if threshold not in self._milestones_hit and elapsed_ratio >= threshold:
                 self._milestones_hit.add(threshold)
-                # Send to all devices on both teams
                 for dev in self._assignment:
                     self._pending_vibrations.setdefault(dev, []).append(pattern_id)
                 print(f"[GARDEN] {int(threshold*100)}% time elapsed — pattern {pattern_id}")
+
+        # Last 10 seconds warning (fires once, sent to all pods)
+        remaining = self._duration - (time.monotonic() - self._start_time)
+        if not self._last10_sent and 0 < remaining <= 10.0:
+            self._last10_sent = True
+            for dev in self._assignment:
+                self._pending_vibrations.setdefault(dev, []).append(VIBR_LAST_10)
+            print("[GARDEN] Last 10 s — anxious vibration!")
 
     def _assign_team(self, device_name: str) -> int:
         if device_name not in self._assignment:

@@ -16,6 +16,7 @@
 #define VIBR_MILESTONE3  5   // ~1.2 s — 75 % progress  (four quick taps)
 #define VIBR_WIN         6   // ~1.7 s — full bloom/win  (rapid burst + hold)
 #define VIBR_FLOWER_50   7   // ~0.7 s — every 50 flowers (happy double-tap + hold)
+#define VIBR_LAST_10     8   // ~0.5 s — last 10 s warning (5 rapid anxious pulses)
 
 /**
  * Initialise the vibration motor GPIO. Call once in setup().

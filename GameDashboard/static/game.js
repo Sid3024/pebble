@@ -13,7 +13,7 @@ const STRINGS = {
     score:            (s) => `Score: ${s} pts`,
     teamScore:        (s) => `${s} pts`,
     durationLabel:    "Game Duration",
-    durMin:           (m) => `${m} min`,
+    durMin:           (s) => s < 60 ? `${s} sec` : `${s/60} min`,
     badgeWaiting:     "Ready",
     badgePlaying:     "Growing!",
     badgeWon:         "Time's Up!",
@@ -51,7 +51,7 @@ const STRINGS = {
     score:            (s) => `得分：${s} 分`,
     teamScore:        (s) => `${s} 分`,
     durationLabel:    "游戏时长",
-    durMin:           (m) => `${m} 分钟`,
+    durMin:           (s) => s < 60 ? `${s} 秒` : `${s/60} 分钟`,
     badgeWaiting:     "准备好了",
     badgePlaying:     "生长中！",
     badgeWon:         "时间到！",
@@ -215,8 +215,7 @@ function applyLang() {
   // Duration selector
   document.getElementById("duration-label").textContent = t("durationLabel");
   document.querySelectorAll(".dur-btn").forEach(btn => {
-    const secs = parseInt(btn.dataset.secs);
-    btn.textContent = t("durMin", secs / 60);
+    btn.textContent = t("durMin", parseInt(btn.dataset.secs));
   });
 
   // Team selection overlay strings

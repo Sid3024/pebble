@@ -87,6 +87,15 @@ static void vibration_task(void* pv) {
             pulse(VIBRATION_DUTY_FULL, 100,  80);
             motor_on(VIBRATION_DUTY_FULL, 350);
             break;
+
+        case VIBR_LAST_10:
+            // Last 10 s — anxious rapid buzz  ·····
+            pulse(VIBRATION_DUTY_FULL,  60,  40);
+            pulse(VIBRATION_DUTY_FULL,  60,  40);
+            pulse(VIBRATION_DUTY_FULL,  60,  40);
+            pulse(VIBRATION_DUTY_FULL,  60,  40);
+            pulse(VIBRATION_DUTY_FULL,  60,   0);
+            break;
     }
 
     motor_off(0);
