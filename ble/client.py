@@ -14,8 +14,6 @@ class PebbleClient:
       process_window(device_name, window_sum).
     - Polls the controller for pending vibration commands once per second
       and writes them to the pod's command characteristic.
-      Works with any controller that implements
-      pop_vibration_commands(device_name) -> list[int].
     - Auto-reconnects on disconnect or error.
     """
 
@@ -24,16 +22,12 @@ class PebbleClient:
         self.name        = device.name
         self._controller = controller
 
-    # ── Window notification ───────────────────────────────────
-
     def _on_window(self, _sender, data: bytearray) -> None:
         try:
             (window_sum,) = struct.unpack("<f", bytes(data))
             self._controller.process_window(self.name, window_sum)
         except Exception as exc:
             print(f"[{self.name}] ERROR in window callback: {exc}")
-
-    # ── Vibration commands ────────────────────────────────────
 
     def _pop_vibration_commands(self) -> list[int]:
         fn = getattr(self._controller, "pop_vibration_commands", None)
@@ -46,8 +40,6 @@ class PebbleClient:
             print(f"[{self.name}] vibration pattern {pattern_id} sent")
         except Exception as exc:
             print(f"[{self.name}] vibration send failed: {exc}")
-
-    # ── Main loop ─────────────────────────────────────────────
 
     async def run(self) -> None:
         RETRY_DELAY = 5.0

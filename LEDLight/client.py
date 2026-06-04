@@ -93,9 +93,13 @@ class LEDClient:
         total = s0 + s1
 
         if total == 0:
-            ratio = 128   # 50/50 until someone scores
+            ratio = 128        # 0-0: split 50/50
+        elif s0 == 0:
+            ratio = 0          # only Team 2 has scored: full Team 2 colour
+        elif s1 == 0:
+            ratio = 255        # only Team 1 has scored: full Team 1 colour
         else:
-            # Clamp to 1–254 so both colours always have at least one LED visible
+            # Both teams scoring — keep a visible boundary in the middle
             ratio = max(1, min(254, int(s0 / total * 255)))
 
         return bytes([ratio, PHASE_PLAYING])

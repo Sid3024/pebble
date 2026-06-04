@@ -22,17 +22,27 @@ static CRGB TEAM1_COL;
 // boundary: float position in LED index space (0 – NUM_LEDS)
 // A white spark pixel sits exactly at the boundary for the Harry-Potter effect.
 static void render_playing(float boundary) {
-    int bi = (int)boundary;
+    // Only show the spark effect when the boundary is genuinely in the middle.
+    // At the extremes (one team has all LEDs), force solid colour with no spark.
+    bool at_start = boundary < 0.5f;
+    bool at_end   = boundary > (NUM_LEDS - 1.5f);
 
     for (int i = 0; i < NUM_LEDS; i++) {
-        if (i < bi) {
+        float f = (float)i - boundary;
+        if (f < -0.5f) {
             s_leds[i] = TEAM0_COL;
-        } else if (i > bi) {
+        } else if (f > 0.5f) {
             s_leds[i] = TEAM1_COL;
         } else {
-            // Boundary pixel — crackle between white and a mix of both teams
-            uint8_t spark = beatsin8(120, 160, 255);   // 120 BPM oscillation
-            s_leds[i]     = CRGB(spark, spark, spark);
+            // Boundary pixel
+            if (at_start) {
+                s_leds[i] = TEAM1_COL;  // full strip is Team 2
+            } else if (at_end) {
+                s_leds[i] = TEAM0_COL;  // full strip is Team 1
+            } else {
+                uint8_t spark = beatsin8(120, 160, 255);
+                s_leds[i]     = CRGB(spark, spark, spark);
+            }
         }
     }
 }
