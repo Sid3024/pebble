@@ -26,9 +26,9 @@ const STRINGS = {
     winTitle:         "🌸 Time's Up! 🌸",
     winSub:           (s) => `Final score: ${s} pts — amazing work!`,
     teamWinsTitle:    (n) => `🏆 Team ${n} Wins! 🏆`,
-    teamWinsSub:      (s0, s1) => `Team 1: ${s0} pts  |  Team 2: ${s1} pts`,
+    teamWinsSub:      (s0, s1) => `Team 1: ${s0} pts\nTeam 2: ${s1} pts`,
     teamTieTitle:     "🌸 It's a Tie! 🌸",
-    teamTieSub:       (s0, s1) => `Team 1: ${s0} pts  |  Team 2: ${s1} pts`,
+    teamTieSub:       (s0, s1) => `Team 1: ${s0} pts\nTeam 2: ${s1} pts`,
     btnReset:         "Play Again",
     team:             (n) => `Team ${n}`,
     facilitator:      "▶ Start session",
@@ -64,9 +64,9 @@ const STRINGS = {
     winTitle:         "🌸 时间到！🌸",
     winSub:           (s) => `最终得分：${s} 分 — 太棒了！`,
     teamWinsTitle:    (n) => `🏆 队伍${["一","二"][n-1] || n}获胜！🏆`,
-    teamWinsSub:      (s0, s1) => `队伍一：${s0} 分  |  队伍二：${s1} 分`,
+    teamWinsSub:      (s0, s1) => `队伍一：${s0} 分\n队伍二：${s1} 分`,
     teamTieTitle:     "🌸 平局！🌸",
-    teamTieSub:       (s0, s1) => `队伍一：${s0} 分  |  队伍二：${s1} 分`,
+    teamTieSub:       (s0, s1) => `队伍一：${s0} 分\n队伍二：${s1} 分`,
     btnReset:         "再玩一次",
     team:             (n) => `队伍${["一","二"][n-1] || n}`,
     facilitator:      "▶ 开始",
@@ -638,6 +638,33 @@ function launchConfetti() {
     el.addEventListener("animationend", () => el.remove());
   }
 }
+
+// ── Fullscreen ────────────────────────────────────────────────
+(function () {
+  const btn = document.getElementById("btn-fullscreen");
+
+  function isFs() { return !!document.fullscreenElement; }
+
+  function update() {
+    btn.textContent = isFs() ? "✕" : "⛶";
+    btn.title       = isFs() ? "Exit fullscreen  (Esc)" : "Enter fullscreen";
+  }
+
+  function toggle() {
+    if (isFs()) document.exitFullscreen();
+    else        document.documentElement.requestFullscreen();
+  }
+
+  btn.addEventListener("click", toggle);
+
+  // Esc is handled natively by the browser, but listen anyway to keep icon in sync
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isFs()) document.exitFullscreen();
+  });
+
+  document.addEventListener("fullscreenchange", update);
+  update();
+})();
 
 // ── Connection dot ───────────────────────────────────────────
 function setConnDot(connected) {
