@@ -1,31 +1,43 @@
 import asyncio
-import struct
+import time
 
 from bleak import BleakClient
 
 from .constants import WINDOW_CHAR_UUID, COMMAND_CHAR_UUID
+from .imu import parse_imu_window
 
 
 class PebbleClient:
     """
     Manages the BLE connection to a single Pebble pod.
 
-    - Forwards window-sum notifications to the game controller via
-      process_window(device_name, window_sum).
+    - Forwards IMU window notifications to the game controller via
+      process_imu_window(device_name, imu_window) when available.
+    - Falls back to process_window(device_name, effort_value) for older games.
     - Polls the controller for pending vibration commands once per second
       and writes them to the pod's command characteristic.
     - Auto-reconnects on disconnect or error.
     """
 
-    def __init__(self, device, controller) -> None:
+    def __init__(self, device, controller, name: str | None = None) -> None:
         self._device     = device
-        self.name        = device.name
+        address = getattr(device, "address", None) or str(device)
+        suffix = str(address)[-8:].replace(":", "")
+        self.name        = name or getattr(device, "name", None) or f"Pebble_{suffix}"
         self._controller = controller
+        self._last_window_seen = 0.0
 
     def _on_window(self, _sender, data: bytearray) -> None:
         try:
-            (window_sum,) = struct.unpack("<f", bytes(data))
-            self._controller.process_window(self.name, window_sum)
+            imu_window = parse_imu_window(bytes(data))
+            self._last_window_seen = time.monotonic()
+            print(f"[{self.name}] imu activity={imu_window.shake_score:.3f} "
+                  f"move={imu_window.movement_magnitude:.3f} gyro={imu_window.gyro_magnitude:.1f}")
+            fn = getattr(self._controller, "process_imu_window", None)
+            if fn:
+                fn(self.name, imu_window)
+            else:
+                self._controller.process_window(self.name, imu_window.effort_fallback)
         except Exception as exc:
             print(f"[{self.name}] ERROR in window callback: {exc}")
 
@@ -49,10 +61,15 @@ class PebbleClient:
                     print(f"[{self.name}] connected")
                     await client.start_notify(WINDOW_CHAR_UUID, self._on_window)
                     print(f"[{self.name}] subscribed to window notifications")
+                    self._last_window_seen = time.monotonic()
 
                     while client.is_connected:
                         for cmd in self._pop_vibration_commands():
                             await self._send_command(client, cmd)
+                        if time.monotonic() - self._last_window_seen > 5.0:
+                            print(f"[{self.name}] connected, but no IMU windows received for 5 s. "
+                                  "Check MPU6050 wiring/init and pod serial logs.")
+                            self._last_window_seen = time.monotonic()
                         await asyncio.sleep(1.0)
 
                 print(f"[{self.name}] disconnected — retrying in {RETRY_DELAY:.0f}s")

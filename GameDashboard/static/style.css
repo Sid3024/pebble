@@ -607,10 +607,13 @@ html, body {
   text-align: center; margin-top: -14px;
 }
 
-#ts-cards { display: flex; gap: 36px; }
+#ts-cards { display: flex; gap: 24px; }
+#ts-cards.ts-cards-single { justify-content: center; }
+
+.ts-card.hidden { display: none; }
 
 .ts-card {
-  width: 210px; padding: 26px 22px;
+  width: 185px; padding: 24px 18px;
   border-radius: 6px; border: 4px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.06);
   display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -618,10 +621,20 @@ html, body {
   box-shadow: 5px 5px 0 rgba(0,0,0,0.3);
 }
 
-.ts-card-name { font-family: 'Cinzel Decorative', serif; font-size: 1.1rem; font-weight: 700; color: rgba(220,255,200,0.9); }
-.ts-count     { font-family: 'Nunito', sans-serif; font-size: 4.5rem; font-weight: 900; line-height: 1; color: #fff; }
-.ts-card-label { font-size: 0.95rem; font-weight: 600; color: rgba(180,255,160,0.7); }
+.ts-card-name { font-family: 'Cinzel Decorative', serif; font-size: 1.0rem; font-weight: 700; color: rgba(220,255,200,0.9); }
+.ts-count     { font-family: 'Nunito', sans-serif; font-size: 4rem; font-weight: 900; line-height: 1; color: #fff; }
+.ts-card-label { font-size: 0.9rem; font-weight: 600; color: rgba(180,255,160,0.7); }
 
+/* Instructor card — gold */
+.ts-card.ts-active.ts-instructor-active {
+  border-color: #FFD700; transform: scale(1.06);
+  box-shadow: 5px 5px 0 rgba(0,0,0,0.3), 0 0 28px rgba(255,200,0,0.55);
+  animation: ts-glow-gold 1.6s ease-in-out infinite;
+}
+.ts-card.ts-active.ts-instructor-active .ts-card-name,
+.ts-card.ts-active.ts-instructor-active .ts-count { color: #FFE566; }
+
+/* Team 1 card — blue */
 .ts-card.ts-active {
   border-color: #1A88FF; transform: scale(1.06);
   box-shadow: 5px 5px 0 rgba(0,0,0,0.3), 0 0 28px rgba(30,140,255,0.5);
@@ -629,6 +642,8 @@ html, body {
 }
 .ts-card.ts-active .ts-card-name { color: #80CCFF; }
 .ts-card.ts-active .ts-count     { color: #80CCFF; }
+
+/* Team 2 card — orange */
 #ts-card-1.ts-active {
   border-color: #FF6020;
   box-shadow: 5px 5px 0 rgba(0,0,0,0.3), 0 0 28px rgba(255,100,30,0.5);
@@ -639,9 +654,10 @@ html, body {
 
 @keyframes ts-glow        { 0%,100%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 16px rgba(30,140,255,0.4)} 50%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 36px rgba(30,140,255,0.8)} }
 @keyframes ts-glow-orange { 0%,100%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 16px rgba(255,100,30,0.4)} 50%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 36px rgba(255,100,30,0.8)} }
+@keyframes ts-glow-gold   { 0%,100%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 16px rgba(255,200,0,0.4)}  50%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 36px rgba(255,200,0,0.9)} }
 
-.ts-card.ts-locked { opacity: 0.6; border-color: rgba(255,255,255,0.1); transform: none; }
-.ts-card.ts-waiting { opacity: 0.3; transform: none; }
+.ts-card.ts-locked { opacity: 0.6; border-color: rgba(255,255,255,0.1); transform: none; animation: none; }
+.ts-card.ts-waiting { opacity: 0.3; transform: none; animation: none; }
 
 .ts-card.ts-full {
   border-color: #44CC44; animation: none; transform: none;
@@ -654,12 +670,16 @@ html, body {
 @keyframes ts-bump { 0%{transform:scale(1)} 40%{transform:scale(1.5)} 70%{transform:scale(0.9)} 100%{transform:scale(1)} }
 .ts-count-bump { animation: ts-bump 0.4s cubic-bezier(0.34,1.8,0.64,1); }
 
-#btn-next-team, #btn-begin-game {
+#btn-confirm-instructor, #btn-next-team, #btn-begin-game {
   padding: 20px 64px;
   font-family: 'Nunito', sans-serif; font-size: 1.6rem; font-weight: 900;
   border: none; border-radius: 6px; cursor: pointer;
   transition: transform 0.1s, box-shadow 0.1s;
   text-transform: uppercase; letter-spacing: 0.5px;
+}
+#btn-confirm-instructor {
+  background: #FFD700; color: #3A2A00;
+  box-shadow: 5px 5px 0 #B89400, 0 0 20px rgba(255,215,0,0.45);
 }
 #btn-next-team {
   background: #1A88E0; color: #fff;
@@ -669,8 +689,8 @@ html, body {
   background: #5CC820; color: #fff;
   box-shadow: 5px 5px 0 #2A7010, 0 0 20px rgba(100,220,30,0.35);
 }
-#btn-next-team:hover, #btn-begin-game:hover   { transform: translate(-2px,-2px); }
-#btn-next-team:active, #btn-begin-game:active { transform: translate(2px,2px); }
+#btn-confirm-instructor:hover, #btn-next-team:hover, #btn-begin-game:hover   { transform: translate(-2px,-2px); }
+#btn-confirm-instructor:active, #btn-next-team:active, #btn-begin-game:active { transform: translate(2px,2px); }
 
 /* Duration selector in team-select (reuse waiting overlay styles) */
 

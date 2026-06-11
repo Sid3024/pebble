@@ -32,6 +32,14 @@ class FlowerWSServer:
         if self._controller is not None:
             self._controller.process_window(device_name, window_sum)
 
+    def process_imu_window(self, device_name: str, imu_window) -> None:
+        if self._controller is not None:
+            fn = getattr(self._controller, "process_imu_window", None)
+            if fn:
+                fn(device_name, imu_window)
+            else:
+                self._controller.process_window(device_name, imu_window.effort_fallback)
+
     def get_game_state(self) -> dict:
         """Public accessor for the current game state (used by LEDClient)."""
         return self._get_state()
@@ -70,6 +78,9 @@ class FlowerWSServer:
         elif action == "next_team":
             if hasattr(self._controller, "next_team"):
                 self._controller.next_team()
+        elif action == "confirm_instructor":
+            if hasattr(self._controller, "confirm_instructor"):
+                self._controller.confirm_instructor()
         elif action == "begin_game":
             if hasattr(self._controller, "begin_game"):
                 self._controller.begin_game()
