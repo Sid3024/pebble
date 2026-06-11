@@ -22,3 +22,10 @@ struct ImuSample {
 
 bool imu_init();
 bool imu_read(ImuSample &sample);
+
+/**
+ * Run I2C bus scan + WHO_AM_I probe + re-init attempt.
+ * Prints findings to Serial. Returns true if re-init succeeded.
+ * Call when consecutive read failures suggest the IMU has dropped off the bus.
+ */
+bool imu_diagnose();

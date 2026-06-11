@@ -104,6 +104,50 @@ bool imu_init() {
     return false;
 }
 
+bool imu_diagnose() {
+    Serial.println("[IMU] === DIAGNOSTIC START ===");
+
+    // I2C bus scan
+    Serial.println("[IMU] Scanning I2C bus...");
+    uint8_t found = 0;
+    for (uint8_t addr = 1; addr < 128; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            int who = read_who_am_i(addr);
+            Serial.printf("[IMU]   0x%02X — WHO_AM_I=0x%02X", addr, who);
+            if (addr == 0x68 || addr == 0x69) Serial.print(" (MPU6050/6500 address)");
+            Serial.println();
+            found++;
+        }
+    }
+    if (found == 0) {
+        Serial.println("[IMU]   No I2C devices found — check SDA/SCL wiring and power");
+    } else {
+        Serial.printf("[IMU]   %d device(s) on bus\n", found);
+    }
+
+    // WHO_AM_I probe at known IMU addresses even if scan missed them
+    const uint8_t imu_addrs[] = {0x68, 0x69};
+    for (uint8_t addr : imu_addrs) {
+        int who = read_who_am_i(addr);
+        if (who < 0) {
+            Serial.printf("[IMU]   0x%02X — no response\n", addr);
+        } else {
+            const char* chip = "unknown";
+            if (who == 0x68) chip = "MPU6050";
+            else if (who == 0x70 || who == 0x71 || who == 0x73 || who == 0x98) chip = "MPU6500-family";
+            Serial.printf("[IMU]   0x%02X — WHO_AM_I=0x%02X (%s)\n", addr, who, chip);
+        }
+    }
+
+    // Re-init attempt
+    Serial.println("[IMU] Attempting re-init...");
+    bool ok = imu_init();
+    Serial.printf("[IMU] Re-init %s\n", ok ? "SUCCEEDED" : "FAILED — IMU still offline");
+    Serial.println("[IMU] === DIAGNOSTIC END ===");
+    return ok;
+}
+
 bool imu_read(ImuSample &sample) {
     if (s_use_raw) {
         if (!read_raw_sample(s_active_addr, sample)) {

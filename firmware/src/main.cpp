@@ -6,14 +6,16 @@
 #include "ble/ble.h"
 #include "vibration/vibration.h"
 
-static bool     s_hw_ready      = false;
-static uint32_t s_next_retry_ms = 0;
+static bool     s_hw_ready           = false;
+static uint32_t s_next_retry_ms      = 0;
+static uint32_t s_last_status_send_ms = 0;
 
 static void try_hw_init() {
     vibration_init();
 
     if (!imu_init()) {
-        Serial.println("[ERROR] MPU6050 not found - retrying in 5 s. Check wiring.");
+        Serial.println("[ERROR] MPU6050 not found - running diagnostic...");
+        imu_diagnose();
         s_next_retry_ms = millis() + 5000;
         return;
     }
@@ -59,6 +61,11 @@ void loop() {
     if (!s_hw_ready) {
         if (millis() >= s_next_retry_ms)
             try_hw_init();
+        // Notify connected Python hub that the IMU is offline every 3 s.
+        if (ble_connected() && millis() - s_last_status_send_ms > 3000) {
+            ble_send_status(0x01);
+            s_last_status_send_ms = millis();
+        }
         delay(100);
         return;
     }
