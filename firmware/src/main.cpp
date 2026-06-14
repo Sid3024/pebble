@@ -20,7 +20,7 @@ static void try_hw_init() {
 
     window_task_start();
     s_hw_ready = true;
-    Serial.printf("[INFO] IMU ready. Sampling at %d Hz, window = %d s (%d samples)\n",
+    Serial.printf("[INFO] IMU ready. Sampling at %d Hz, window = %.2f s (%d samples)\n",
                   SAMPLE_RATE_HZ, WINDOW_DURATION_S, SAMPLES_PER_WINDOW);
 }
 

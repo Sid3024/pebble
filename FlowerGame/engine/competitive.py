@@ -3,14 +3,15 @@ from __future__ import annotations
 import math
 import random
 import time
+from collections import deque
 
 from ble.constants import VIBR_FLOWER_50, VIBR_LAST_10, VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_TEAM1, VIBR_TEAM2, VIBR_WIN
 from ble.imu import ImuWindow
 
 from ..config.config import FlowerConfig
-from .controller import DeviceState, _TIME_MILESTONES
+from .controller import DeviceState, _REFERENCE_HISTORY, _TIME_MILESTONES
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, compute_similarity
+from .similarity import SimilarityResult, best_similarity, fallback_score, update_gravity_estimate
 
 
 class TeamState:
@@ -21,17 +22,24 @@ class TeamState:
         self._score: float = 0.0
         self._flower_milestone: int = 0
 
+    def update_gravity(self, device_name: str, window: ImuWindow, alpha: float) -> tuple[float, float, float]:
+        state = self._devices.setdefault(device_name, DeviceState())
+        state.gravity = update_gravity_estimate(
+            state.gravity, (window.ax, window.ay, window.az), alpha, state.gravity_initialized)
+        state.gravity_initialized = True
+        return state.gravity
+
     def apply_similarity(self, device_name: str, result: SimilarityResult) -> bool:
         state = self._devices.setdefault(device_name, DeviceState())
-        delta = self._config.growth_per_window * result.score
+        growth_score = result.score ** self._config.similarity_growth_exponent
+        delta = self._config.growth_per_window * growth_score
         self._score = max(0.0, self._score + delta)
 
         state.phase = "matching" if result.score >= 0.65 else "following"
         state.ready = True
         state.similarity = result.score
-        state.movement_score = result.movement_score
-        state.rotation_score = result.rotation_score
-        state.angle_score = result.angle_score
+        state.direction_score = result.direction_score
+        state.magnitude_score = result.magnitude_score
 
         print(
             f"[Team {self.team_id + 1}][{device_name}] similarity={result.score:.2f} "
@@ -65,9 +73,8 @@ class TeamState:
                     "phase": state.phase,
                     "ready": state.ready,
                     "similarity": round(state.similarity, 3),
-                    "movement_score": round(state.movement_score, 3),
-                    "rotation_score": round(state.rotation_score, 3),
-                    "angle_score": round(state.angle_score, 3),
+                    "direction_score": round(state.direction_score, 3),
+                    "magnitude_score": round(state.magnitude_score, 3),
                 }
                 for name, state in self._devices.items()
             },
@@ -110,7 +117,10 @@ class CompetitiveFlowerController:
         self._pending_vibrations: dict[str, list[int]] = {}
         self._connected_devices: set[str] = set()
         self._instructor: str | None = None
+        self._instructor_gravity: tuple[float, float, float] = (0.0, 0.0, 1.0)
+        self._instructor_gravity_initialized: bool = False
         self._reference: ImuWindow | None = None
+        self._reference_history: deque[ImuWindow] = deque(maxlen=_REFERENCE_HISTORY)
         self.phase: str = "waiting"
         self.winner: int | None = None
         self._select_step: int = 0
@@ -150,7 +160,10 @@ class CompetitiveFlowerController:
         self._pending_vibrations = {}
         self._connected_devices = set()
         self._instructor = None
+        self._instructor_gravity = (0.0, 0.0, 1.0)
+        self._instructor_gravity_initialized = False
         self._reference = None
+        self._reference_history.clear()
         self._select_step = 0
         self.winner = None
         self.phase = "instructor_select"
@@ -180,7 +193,10 @@ class CompetitiveFlowerController:
         self._pending_vibrations = {}
         self._connected_devices = set()
         self._instructor = None
+        self._instructor_gravity = (0.0, 0.0, 1.0)
+        self._instructor_gravity_initialized = False
         self._reference = None
+        self._reference_history.clear()
         self._select_step = 0
         self.winner = None
         self.phase = "waiting"
@@ -286,20 +302,28 @@ class CompetitiveFlowerController:
 
         if device_name == self._instructor:
             self._reference = window
-            return
-        if self._reference is None:
+            self._reference_history.append(window)
+            self._instructor_gravity = update_gravity_estimate(
+                self._instructor_gravity, (window.ax, window.ay, window.az),
+                self._config.similarity_gravity_ema_alpha, self._instructor_gravity_initialized)
+            self._instructor_gravity_initialized = True
             return
 
         team_idx = self._assign_team(device_name)
-        result = compute_similarity(
-            self._reference,
-            window,
-            movement_weight=self._config.similarity_movement_weight,
-            rotation_weight=self._config.similarity_rotation_weight,
-            angle_weight=self._config.similarity_angle_weight,
-            speed_sensitivity=self._config.similarity_speed_sensitivity,
-            angle_tolerance_degrees=self._config.similarity_angle_tolerance_degrees,
-        )
+
+        if not self._config.similarity_enabled:
+            result = fallback_score(window, self._config.similarity_fallback_activity_scale)
+        else:
+            if not self._reference_history:
+                return
+            result = best_similarity(
+                self._reference_history,
+                window,
+                min_movement_accel=self._config.similarity_min_movement_accel,
+                instructor_gravity=self._instructor_gravity,
+                student_gravity=self._teams[team_idx].update_gravity(device_name, window, self._config.similarity_gravity_ema_alpha),
+                direction_penalty_exponent=self._config.similarity_direction_penalty_exponent,
+            )
         flower_hit = self._teams[team_idx].apply_similarity(device_name, result)
         self._check_milestones()
 

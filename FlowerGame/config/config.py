@@ -12,7 +12,11 @@ class FlowerConfig:
 
     # --- Growth point values ---
     # growth_per_window is the max score for a 100% similarity window.
-    growth_per_window:      float = 10.0
+    # Since sprout_points_per_plant = 1.0, this is also the max number of
+    # flowers grown per window at 100% similarity. Actual growth is
+    # growth_per_window * (similarity_score ** similarity_growth_exponent),
+    # so lower matches earn disproportionately less than this max.
+    growth_per_window:      float = 8.0
     idle_growth_per_window: float = 2.0
     wilt_per_window:        float = 0.0
 
@@ -45,8 +49,8 @@ class FlowerConfig:
     # --- Instructor / team selection shake thresholds ---
     # Uses IMU movement magnitude + a small gyro component. Raise if accidental
     # joins occur; lower if users struggle to register.
-    instructor_select_shake_threshold: float = 0.10
-    team_select_imu_threshold: float = 0.10
+    instructor_select_shake_threshold: float = 3.0
+    team_select_imu_threshold: float = 3.0
 
     # Legacy float-window threshold, kept for simulator/backward compatibility.
     # At rest sum ≈ 300.  330 ≈ 10 % above resting — slow deliberate movement.
@@ -54,16 +58,48 @@ class FlowerConfig:
     team_select_shake_threshold: float = 400.0
 
     # --- Similarity scoring (instructor vs. student IMU window) ---
-    # Final score = movement_weight*movement + rotation_weight*rotation + angle_weight*angle.
-    # The three weights should add up to 1.0.
-    similarity_movement_weight: float = 0.50
-    similarity_rotation_weight: float = 0.20
-    similarity_angle_weight:    float = 0.30
+    # If False, the instructor-matching similarity score is skipped entirely
+    # and every student instead grows based on their own movement effort
+    # (see similarity_fallback_activity_scale below). Flip this off on the
+    # day if the similarity score is too noisy/unreliable - no firmware
+    # reupload needed, just edit this file and restart.
+    similarity_enabled: bool = True
 
-    # Within the movement component, blend "same direction" vs. "same speed":
-    #   0.0 -> direction only (speed/intensity ignored)
-    #   1.0 -> speed/intensity only (direction ignored)
-    similarity_speed_sensitivity: float = 0.0
+    # Used only when similarity_enabled is False. Each student's score is
+    # their own shake_score (movement magnitude + a bit of gyro) divided by
+    # this value, clamped to [0, 1]. Lower = easier to reach 100%.
+    similarity_fallback_activity_scale: float = 0.5
 
-    # Roll/pitch angle difference (degrees) at which angle_score reaches 0.
-    similarity_angle_tolerance_degrees: float = 90.0
+    # Movement is compared axis-by-axis (ax, ay, az), each with gravity
+    # removed via the pod's own (EMA-tracked) gravity vector:
+    #   - If ANY axis is below similarity_min_movement_accel for either the
+    #     instructor or the student, the score is 0 (not enough real motion
+    #     to judge).
+    #   - If ALL THREE axes move in the SAME direction (sign) for both pods,
+    #     the score is 0.9-1.0 - magnitude_ratio ** (1/exponent) only affects
+    #     how close to 1.0 it gets (see exponent below).
+    #   - If ANY axis moves in OPPOSITE directions between the two pods, the
+    #     score is capped below 0.5, and drops further the more axes
+    #     disagree.
+    similarity_direction_penalty_exponent: float = 8.0
+
+    # If the gravity-removed acceleration on ANY axis (x, y, or z) is below
+    # this threshold (g) for either the instructor or the student, the
+    # similarity score is forced to 0 - that axis isn't showing enough real
+    # movement to compare.
+    similarity_min_movement_accel: float = 0.005
+
+    # Smoothing factor (0-1) for each pod's gravity-vector estimate, tracked
+    # as an exponential moving average of its raw acceleration so gravity is
+    # removed correctly regardless of how the pod is worn/oriented. Lower =
+    # slower to adapt but less affected by sustained movement.
+    similarity_gravity_ema_alpha: float = 0.02
+
+    # Shapes how match score -> flower growth. growth = growth_per_window *
+    # (similarity_score ** this). >1 rewards high matches disproportionately
+    # more than low ones:
+    #   2.0 -> a 0.5 match gives 25% of growth_per_window, a 0.9 match gives
+    #          81%, a 1.0 match gives 100% (the full growth_per_window).
+    # Higher = steeper - medium matches earn much less, near-perfect matches
+    # stay close to the max.
+    similarity_growth_exponent: float = 2.0

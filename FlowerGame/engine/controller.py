@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 from ble.constants import VIBR_FLOWER_50, VIBR_LAST_10, VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_WIN
@@ -8,7 +9,13 @@ from ble.imu import ImuWindow
 
 from ..config.config import FlowerConfig
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, compute_similarity
+from .similarity import SimilarityResult, best_similarity, fallback_score, update_gravity_estimate
+
+# Each pod's sampling window starts independently when it connects, so the
+# instructor's and student's windows aren't phase-aligned. Keep this many of
+# the instructor's most recent windows and match the student's window against
+# whichever one overlaps best (see similarity.best_similarity).
+_REFERENCE_HISTORY = 2
 
 _TIME_MILESTONES = [
     (0.50, VIBR_MILESTONE2),
@@ -21,11 +28,12 @@ class DeviceState:
     phase: str = "waiting"
     ready: bool = False
     similarity: float = 0.0
-    movement_score: float = 0.0
-    rotation_score: float = 0.0
-    angle_score: float = 0.0
+    direction_score: float = 0.0
+    magnitude_score: float = 0.0
     activity: float = 0.0
     last_seen: float = field(default_factory=time.monotonic)
+    gravity: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    gravity_initialized: bool = False
 
 
 class FlowerController:
@@ -41,6 +49,7 @@ class FlowerController:
         self._devices: dict[str, DeviceState] = {}
         self._instructor: str | None = None
         self._reference: ImuWindow | None = None
+        self._reference_history: deque[ImuWindow] = deque(maxlen=_REFERENCE_HISTORY)
         self._score: float = 0.0
         self.phase: str = "waiting"
         self._duration: float = 0.0
@@ -80,6 +89,7 @@ class FlowerController:
         self._devices.clear()
         self._instructor = None
         self._reference = None
+        self._reference_history.clear()
         self._score = 0.0
         self.phase = "instructor_select"
         self._duration = float(duration_seconds)
@@ -94,6 +104,7 @@ class FlowerController:
         self._devices.clear()
         self._instructor = None
         self._reference = None
+        self._reference_history.clear()
         self._score = 0.0
         self.phase = "waiting"
         self._duration = 0.0
@@ -114,9 +125,8 @@ class FlowerController:
                 "ready": state.ready,
                 "role": "instructor" if name == self._instructor else "student",
                 "similarity": round(state.similarity, 3),
-                "movement_score": round(state.movement_score, 3),
-                "rotation_score": round(state.rotation_score, 3),
-                "angle_score": round(state.angle_score, 3),
+                "direction_score": round(state.direction_score, 3),
+                "magnitude_score": round(state.magnitude_score, 3),
                 "activity": round(state.activity, 3),
             }
             for name, state in self._devices.items()
@@ -175,42 +185,58 @@ class FlowerController:
 
         if device_name == self._instructor:
             self._reference = window
+            self._reference_history.append(window)
             state = self._devices[device_name]
             state.phase = "instructor"
             state.ready = True
+            state.gravity = update_gravity_estimate(
+                state.gravity, (window.ax, window.ay, window.az),
+                self._config.similarity_gravity_ema_alpha, state.gravity_initialized)
+            state.gravity_initialized = True
             return
 
-        if self._reference is None:
+        if not self._config.similarity_enabled:
+            result = fallback_score(window, self._config.similarity_fallback_activity_scale)
+            self._apply_similarity(device_name, result)
+            self._check_milestones()
             return
 
-        result = compute_similarity(
-            self._reference,
+        if not self._reference_history:
+            return
+
+        student_state = self._devices[device_name]
+        student_state.gravity = update_gravity_estimate(
+            student_state.gravity, (window.ax, window.ay, window.az),
+            self._config.similarity_gravity_ema_alpha, student_state.gravity_initialized)
+        student_state.gravity_initialized = True
+
+        result = best_similarity(
+            self._reference_history,
             window,
-            movement_weight=self._config.similarity_movement_weight,
-            rotation_weight=self._config.similarity_rotation_weight,
-            angle_weight=self._config.similarity_angle_weight,
-            speed_sensitivity=self._config.similarity_speed_sensitivity,
-            angle_tolerance_degrees=self._config.similarity_angle_tolerance_degrees,
+            min_movement_accel=self._config.similarity_min_movement_accel,
+            instructor_gravity=self._devices[self._instructor].gravity,
+            student_gravity=student_state.gravity,
+            direction_penalty_exponent=self._config.similarity_direction_penalty_exponent,
         )
         self._apply_similarity(device_name, result)
         self._check_milestones()
 
     def _apply_similarity(self, device_name: str, result: SimilarityResult) -> None:
-        delta = self._config.growth_per_window * result.score
+        growth_score = result.score ** self._config.similarity_growth_exponent
+        delta = self._config.growth_per_window * growth_score
         self._score = max(0.0, self._score + delta)
 
         state = self._devices[device_name]
         state.phase = "matching" if result.score >= 0.65 else "following"
         state.ready = True
         state.similarity = result.score
-        state.movement_score = result.movement_score
-        state.rotation_score = result.rotation_score
-        state.angle_score = result.angle_score
+        state.direction_score = result.direction_score
+        state.magnitude_score = result.magnitude_score
 
         print(
             f"[{device_name}] similarity={result.score:.2f} "
-            f"move={result.movement_score:.2f} rot={result.rotation_score:.2f} "
-            f"angle={result.angle_score:.2f} +{delta:.1f} -> {self._score:.1f}"
+            f"direction={result.direction_score:.2f} "
+            f"magnitude={result.magnitude_score:.2f} +{delta:.1f} -> {self._score:.1f}"
         )
 
     def _average_similarity(self) -> float:

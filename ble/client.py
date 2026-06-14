@@ -31,8 +31,10 @@ class PebbleClient:
         try:
             imu_window = parse_imu_window(bytes(data))
             self._last_window_seen = time.monotonic()
-            print(f"[{self.name}] imu activity={imu_window.shake_score:.3f} "
-                  f"move={imu_window.movement_magnitude:.3f} gyro={imu_window.gyro_magnitude:.1f}")
+            print(f"[{self.name}] activity={imu_window.shake_score:.3f} "
+                  f"accel(ax={imu_window.ax:.3f}, ay={imu_window.ay:.3f}, az={imu_window.az:.3f}) "
+                  f"gyro(gx={imu_window.gx:.1f}, gy={imu_window.gy:.1f}, gz={imu_window.gz:.1f}) "
+                  f"angle(roll={imu_window.roll:.1f}, pitch={imu_window.pitch:.1f})")
             fn = getattr(self._controller, "process_imu_window", None)
             if fn:
                 fn(self.name, imu_window)
@@ -58,7 +60,13 @@ class PebbleClient:
         while True:
             try:
                 async with BleakClient(self._device) as client:
-                    print(f"[{self.name}] connected")
+                    print(f"[{self.name}] connected (mtu={client.mtu_size})")
+                    # Give the BLE stack time to finish MTU/connection-parameter
+                    # negotiation before subscribing. Subscribing immediately
+                    # after connect can race with that negotiation and cause
+                    # the very first notification to arrive truncated to just
+                    # the 3-byte ATT header instead of the 20-byte payload.
+                    await asyncio.sleep(0.5)
                     await client.start_notify(WINDOW_CHAR_UUID, self._on_window)
                     print(f"[{self.name}] subscribed to window notifications")
                     self._last_window_seen = time.monotonic()
