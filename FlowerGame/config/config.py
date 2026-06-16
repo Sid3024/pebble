@@ -16,8 +16,8 @@ class FlowerConfig:
     # flowers grown per window at 100% similarity. Actual growth is
     # growth_per_window * (similarity_score ** similarity_growth_exponent),
     # so lower matches earn disproportionately less than this max.
-    growth_per_window:      float = 8.0
-    idle_growth_per_window: float = 2.0
+    growth_per_window:      float = 3.0
+    idle_growth_per_window: float = 0.1
     wilt_per_window:        float = 0.0
 
     # --- Timed game ---
@@ -94,6 +94,15 @@ class FlowerConfig:
     # removed correctly regardless of how the pod is worn/oriented. Lower =
     # slower to adapt but less affected by sustained movement.
     similarity_gravity_ema_alpha: float = 0.02
+
+    # How many 250 ms firmware windows to merge before computing similarity.
+    # Effective interval = 250 ms × this value.
+    #   1 → 250 ms  (current default — fastest, most responsive)
+    #   2 → 500 ms  (good for slow movements, less cancellation risk)
+    #   4 → 1 s     (very deliberate movements only)
+    # Cannot go below 1 without reflashing firmware (change SAMPLES_PER_WINDOW
+    # in firmware/src/window/window.h).
+    similarity_accumulate_windows: int = 2
 
     # Shapes how match score -> flower growth. growth = growth_per_window *
     # (similarity_score ** this). >1 rewards high matches disproportionately

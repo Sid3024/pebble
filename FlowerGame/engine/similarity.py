@@ -13,6 +13,27 @@ class SimilarityResult:
     magnitude_score: float
 
 
+def merge_windows(windows: list[ImuWindow]) -> ImuWindow:
+    """Average N consecutive ImuWindows into one, extending the effective
+    sampling interval without a firmware change."""
+    n = len(windows)
+    if n == 1:
+        return windows[0]
+    activities = [w.activity for w in windows if w.activity is not None]
+    return ImuWindow(
+        samples=sum(w.samples for w in windows),
+        ax=sum(w.ax for w in windows) / n,
+        ay=sum(w.ay for w in windows) / n,
+        az=sum(w.az for w in windows) / n,
+        gx=sum(w.gx for w in windows) / n,
+        gy=sum(w.gy for w in windows) / n,
+        gz=sum(w.gz for w in windows) / n,
+        roll=sum(w.roll for w in windows) / n,
+        pitch=sum(w.pitch for w in windows) / n,
+        activity=sum(activities) / len(activities) if activities else None,
+    )
+
+
 def fallback_score(student: ImuWindow, activity_scale: float) -> SimilarityResult:
     """Activity-only score used when similarity_enabled is False.
 

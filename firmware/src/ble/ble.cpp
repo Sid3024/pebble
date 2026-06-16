@@ -122,6 +122,13 @@ void ble_send_window(const ImuWindow &window) {
     s_window_char->notify();
 }
 
+void ble_send_status(uint8_t error_code) {
+    if (!s_connected || !s_window_char) return;
+    uint8_t pkt[3] = { 0xE1, error_code, 0 };
+    s_window_char->setValue(pkt, sizeof(pkt));
+    s_window_char->notify();
+}
+
 bool ble_connected() {
     return s_connected;
 }

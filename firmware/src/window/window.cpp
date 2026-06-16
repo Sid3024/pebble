@@ -1,5 +1,6 @@
 #include "window.h"
 #include "accel/accel.h"
+#include <Wire.h>
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -30,12 +31,27 @@ static void sampling_task(void *) {
     TickType_t       last_wake    = xTaskGetTickCount();
 
     ImuWindow accum{};
+    uint32_t  consecutive_failures = 0;
+    // Trigger diagnostic after 2 full windows worth of consecutive read failures
+    constexpr uint32_t DIAG_THRESHOLD = 2 * SAMPLES_PER_WINDOW;
 
     for (;;) {
         vTaskDelayUntil(&last_wake, period_ticks);
 
         ImuSample sample;
-        if (!imu_read(sample)) continue;
+        if (!imu_read(sample)) {
+            consecutive_failures++;
+            if (consecutive_failures == DIAG_THRESHOLD) {
+                Serial.printf("[IMU] %u consecutive read failures — running diagnostic\n",
+                              consecutive_failures);
+                imu_diagnose();
+                // Reset so diagnostic doesn't fire every window if still failing
+                consecutive_failures = 0;
+                accum = ImuWindow{};
+            }
+            continue;
+        }
+        consecutive_failures = 0;
 
         if (!s_gravity_ready) {
             s_gravity_x = sample.ax;

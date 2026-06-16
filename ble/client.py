@@ -27,7 +27,20 @@ class PebbleClient:
         self._controller = controller
         self._last_window_seen = 0.0
 
+    _STATUS_MESSAGES = {
+        0x01: "IMU offline — no I2C devices found. Check SDA/SCL/VCC wiring.",
+        0x02: "IMU init failed — device found but init returned false.",
+        0x03: "IMU lost — repeated read failures during operation.",
+    }
+
     def _on_window(self, _sender, data: bytearray) -> None:
+        # Status/error packet from firmware (magic=0xE1, error_code)
+        if data and data[0] == 0xE1:
+            code = data[1] if len(data) > 1 else 0
+            msg = self._STATUS_MESSAGES.get(code, f"unknown firmware status 0x{code:02X}")
+            print(f"[{self.name}] FIRMWARE: {msg}")
+            return
+
         try:
             imu_window = parse_imu_window(bytes(data))
             self._last_window_seen = time.monotonic()

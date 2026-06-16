@@ -11,7 +11,7 @@ from ble.imu import ImuWindow
 from ..config.config import FlowerConfig
 from .controller import DeviceState, _REFERENCE_HISTORY, _TIME_MILESTONES
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, best_similarity, fallback_score, update_gravity_estimate
+from .similarity import SimilarityResult, best_similarity, fallback_score, merge_windows, update_gravity_estimate
 
 
 class TeamState:
@@ -21,6 +21,7 @@ class TeamState:
         self._devices: dict[str, DeviceState] = {}
         self._score: float = 0.0
         self._flower_milestone: int = 0
+        self._student_accum: dict[str, list[ImuWindow]] = {}
 
     def update_gravity(self, device_name: str, window: ImuWindow, alpha: float) -> tuple[float, float, float]:
         state = self._devices.setdefault(device_name, DeviceState())
@@ -85,6 +86,7 @@ class TeamState:
         self._devices.clear()
         self._score = 0.0
         self._flower_milestone = 0
+        self._student_accum.clear()
 
     def _average_similarity(self) -> float:
         values = [state.similarity for state in self._devices.values() if state.ready]
@@ -121,6 +123,7 @@ class CompetitiveFlowerController:
         self._instructor_gravity_initialized: bool = False
         self._reference: ImuWindow | None = None
         self._reference_history: deque[ImuWindow] = deque(maxlen=_REFERENCE_HISTORY)
+        self._instructor_accum: list[ImuWindow] = []
         self.phase: str = "waiting"
         self.winner: int | None = None
         self._select_step: int = 0
@@ -164,6 +167,7 @@ class CompetitiveFlowerController:
         self._instructor_gravity_initialized = False
         self._reference = None
         self._reference_history.clear()
+        self._instructor_accum = []
         self._select_step = 0
         self.winner = None
         self.phase = "instructor_select"
@@ -197,6 +201,7 @@ class CompetitiveFlowerController:
         self._instructor_gravity_initialized = False
         self._reference = None
         self._reference_history.clear()
+        self._instructor_accum = []
         self._select_step = 0
         self.winner = None
         self.phase = "waiting"
@@ -300,13 +305,19 @@ class CompetitiveFlowerController:
             self._end_game()
             return
 
+        n = self._config.similarity_accumulate_windows
+
         if device_name == self._instructor:
             self._reference = window
-            self._reference_history.append(window)
+            # Gravity EMA updates on every raw window regardless of accumulation
             self._instructor_gravity = update_gravity_estimate(
                 self._instructor_gravity, (window.ax, window.ay, window.az),
                 self._config.similarity_gravity_ema_alpha, self._instructor_gravity_initialized)
             self._instructor_gravity_initialized = True
+            self._instructor_accum.append(window)
+            if len(self._instructor_accum) >= n:
+                self._reference_history.append(merge_windows(self._instructor_accum))
+                self._instructor_accum = []
             return
 
         team_idx = self._assign_team(device_name)
@@ -316,12 +327,20 @@ class CompetitiveFlowerController:
         else:
             if not self._reference_history:
                 return
+            # Gravity EMA updates on every raw window regardless of accumulation
+            student_gravity = self._teams[team_idx].update_gravity(
+                device_name, window, self._config.similarity_gravity_ema_alpha)
+            self._teams[team_idx]._student_accum.setdefault(device_name, []).append(window)
+            if len(self._teams[team_idx]._student_accum[device_name]) < n:
+                return
+            merged = merge_windows(self._teams[team_idx]._student_accum[device_name])
+            self._teams[team_idx]._student_accum[device_name] = []
             result = best_similarity(
                 self._reference_history,
-                window,
+                merged,
                 min_movement_accel=self._config.similarity_min_movement_accel,
                 instructor_gravity=self._instructor_gravity,
-                student_gravity=self._teams[team_idx].update_gravity(device_name, window, self._config.similarity_gravity_ema_alpha),
+                student_gravity=student_gravity,
                 direction_penalty_exponent=self._config.similarity_direction_penalty_exponent,
             )
         flower_hit = self._teams[team_idx].apply_similarity(device_name, result)

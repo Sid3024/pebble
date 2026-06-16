@@ -9,7 +9,7 @@ from ble.imu import ImuWindow
 
 from ..config.config import FlowerConfig
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, best_similarity, fallback_score, update_gravity_estimate
+from .similarity import SimilarityResult, best_similarity, fallback_score, merge_windows, update_gravity_estimate
 
 # Each pod's sampling window starts independently when it connects, so the
 # instructor's and student's windows aren't phase-aligned. Keep this many of
@@ -50,6 +50,8 @@ class FlowerController:
         self._instructor: str | None = None
         self._reference: ImuWindow | None = None
         self._reference_history: deque[ImuWindow] = deque(maxlen=_REFERENCE_HISTORY)
+        self._instructor_accum: list[ImuWindow] = []
+        self._student_accum: dict[str, list[ImuWindow]] = {}
         self._score: float = 0.0
         self.phase: str = "waiting"
         self._duration: float = 0.0
@@ -90,6 +92,8 @@ class FlowerController:
         self._instructor = None
         self._reference = None
         self._reference_history.clear()
+        self._instructor_accum.clear()
+        self._student_accum.clear()
         self._score = 0.0
         self.phase = "instructor_select"
         self._duration = float(duration_seconds)
@@ -105,6 +109,8 @@ class FlowerController:
         self._instructor = None
         self._reference = None
         self._reference_history.clear()
+        self._instructor_accum.clear()
+        self._student_accum.clear()
         self._score = 0.0
         self.phase = "waiting"
         self._duration = 0.0
@@ -183,16 +189,22 @@ class FlowerController:
             self._queue_vibration_all(VIBR_WIN)
             return
 
+        n = self._config.similarity_accumulate_windows
+
         if device_name == self._instructor:
-            self._reference = window
-            self._reference_history.append(window)
             state = self._devices[device_name]
             state.phase = "instructor"
             state.ready = True
+            # Gravity EMA updates on every raw window regardless of accumulation
             state.gravity = update_gravity_estimate(
                 state.gravity, (window.ax, window.ay, window.az),
                 self._config.similarity_gravity_ema_alpha, state.gravity_initialized)
             state.gravity_initialized = True
+            self._reference = window
+            self._instructor_accum.append(window)
+            if len(self._instructor_accum) >= n:
+                self._reference_history.append(merge_windows(self._instructor_accum))
+                self._instructor_accum = []
             return
 
         if not self._config.similarity_enabled:
@@ -205,14 +217,21 @@ class FlowerController:
             return
 
         student_state = self._devices[device_name]
+        # Gravity EMA updates on every raw window regardless of accumulation
         student_state.gravity = update_gravity_estimate(
             student_state.gravity, (window.ax, window.ay, window.az),
             self._config.similarity_gravity_ema_alpha, student_state.gravity_initialized)
         student_state.gravity_initialized = True
 
+        self._student_accum.setdefault(device_name, []).append(window)
+        if len(self._student_accum[device_name]) < n:
+            return
+        merged = merge_windows(self._student_accum[device_name])
+        self._student_accum[device_name] = []
+
         result = best_similarity(
             self._reference_history,
-            window,
+            merged,
             min_movement_accel=self._config.similarity_min_movement_accel,
             instructor_gravity=self._devices[self._instructor].gravity,
             student_gravity=student_state.gravity,
