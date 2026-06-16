@@ -464,6 +464,8 @@ function updateSelectionOverlay(state) {
   if (isSingle) {
     document.getElementById("btn-next-team").style.display  = "none";
     document.getElementById("btn-begin-game").style.display = "none";
+    document.getElementById("btn-confirm-instructor").style.display =
+      (phase === "instructor_select" && !!state.instructor) ? "" : "none";
     return;
   }
 
