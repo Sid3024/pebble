@@ -207,6 +207,16 @@ class FlowerController:
                 self._instructor_accum = []
             return
 
+        # 3-second warmup: let gravity EMA stabilise before scoring begins.
+        # Accumulation is intentionally skipped so the first scored window is fresh.
+        if time.monotonic() - self._start_time < 3.0:
+            student_state = self._devices[device_name]
+            student_state.gravity = update_gravity_estimate(
+                student_state.gravity, (window.ax, window.ay, window.az),
+                self._config.similarity_gravity_ema_alpha, student_state.gravity_initialized)
+            student_state.gravity_initialized = True
+            return
+
         if not self._config.similarity_enabled:
             result = fallback_score(window, self._config.similarity_fallback_activity_scale)
             self._apply_similarity(device_name, result)

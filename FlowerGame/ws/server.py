@@ -52,7 +52,7 @@ class FlowerWSServer:
 
     def _get_state(self) -> dict:
         if self._controller is None:
-            return {
+            state = {
                 "mode":           "single",
                 "phase":          "waiting",
                 "time_remaining": 0.0,
@@ -63,7 +63,11 @@ class FlowerWSServer:
                 "devices":        {},
                 "plants":         [],
             }
-        return self._controller.get_state()
+        else:
+            state = self._controller.get_state()
+        state["show_match_percent"] = self._config.show_match_percent == "show"
+        state["button_points"] = self._config.button_points
+        return state
 
     def _handle_action(self, msg: dict) -> None:
         action   = msg.get("action")
@@ -84,6 +88,9 @@ class FlowerWSServer:
         elif action == "begin_game":
             if hasattr(self._controller, "begin_game"):
                 self._controller.begin_game()
+        elif action == "add_score":
+            if self._config.button_points and hasattr(self._controller, "add_score"):
+                self._controller.add_score(int(msg.get("team", 0)), int(msg.get("amount", 1)))
         elif action == "reset":
             self._controller = None
 

@@ -57,6 +57,18 @@ class FlowerConfig:
     # Raise if accidental joins occur; lower if users struggle to register.
     team_select_shake_threshold: float = 400.0
 
+    # --- Button Points (competitive mode only) ---
+    # When True, keyboard keys add bonus points directly to a team's score:
+    #   1/2/3/4 → Team 1 +1/+2/+3/+4 pts
+    #   q/w/e/r → Team 2 +1/+2/+3/+4 pts
+    button_points: bool = True
+
+    # --- UI display ---
+    # Controls whether the match % is shown alongside the score in the game UI.
+    # "show" → "Score: X pts · Match: Y%" (default)
+    # "hide" → "Score: X pts" only
+    show_match_percent: str = "hide"
+
     # --- Similarity scoring (instructor vs. student IMU window) ---
     # If False, the instructor-matching similarity score is skipped entirely
     # and every student instead grows based on their own movement effort

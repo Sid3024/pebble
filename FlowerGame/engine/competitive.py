@@ -351,6 +351,12 @@ class CompetitiveFlowerController:
                 if team == team_idx:
                     self._pending_vibrations.setdefault(dev, []).append(VIBR_FLOWER_50)
 
+    def add_score(self, team_idx: int, amount: int) -> None:
+        if self.phase != "playing" or team_idx not in (0, 1):
+            return
+        self._teams[team_idx]._score += amount
+        print(f"[GARDEN] Button Points: Team {team_idx + 1} +{amount} -> {self._teams[team_idx]._score:.1f}")
+
     def _end_game(self) -> None:
         self.phase = "won"
         scores = [t.score for t in self._teams]

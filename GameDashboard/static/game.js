@@ -184,6 +184,7 @@ let selectedDuration = 60;
 let lastTSCounts     = [-1, -1];
 let lastStateTeams   = null;   // last competitive teams array (for win overlay)
 let lastStateSingle  = null;   // last single state (for win overlay)
+let buttonPoints     = false;  // whether keyboard button-points are enabled
 
 // Garden objects — el: DOM container, els: sparse array of plant elements, scale: size factor
 const SINGLE_GARDEN = { el: null, els: [], scale: 1.0 };
@@ -364,7 +365,8 @@ function updateGame(state) {
   const phase  = state.phase || "waiting";
   const winner = state.winner ?? null;
 
-  lastMode = mode;
+  lastMode     = mode;
+  buttonPoints = !!state.button_points;
 
   // Pod count
   const totalDevices = state.total_connected ?? (
@@ -397,9 +399,9 @@ function updateGame(state) {
 
   // Garden / progress
   if (mode === "competitive") {
-    (state.teams || []).forEach(team => updateTeam(team));
+    (state.teams || []).forEach(team => updateTeam(team, state.show_match_percent !== false));
   } else {
-    updateProgress(state.score, state.progress, state.similarity);
+    updateProgress(state.score, state.progress, state.show_match_percent !== false ? state.similarity : null);
     updatePlants(state.plants, SINGLE_GARDEN);
   }
 }
@@ -587,11 +589,11 @@ function updatePodCount(n) {
 }
 
 // ── Competitive team update ───────────────────────────────────
-function updateTeam(team) {
+function updateTeam(team, showSimilarity = true) {
   const i = team.id;
   const pct = Math.round((team.similarity ?? 0) * 100);
   document.getElementById(`team-score-label-${i}`).textContent =
-    team.similarity === undefined ? t("teamScore", team.score ?? 0) : t("teamScoreSimilarity", team.score ?? 0, pct);
+    (!showSimilarity || team.similarity === undefined) ? t("teamScore", team.score ?? 0) : t("teamScoreSimilarity", team.score ?? 0, pct);
   updatePlants(team.plants, TEAM_GARDENS[i]);
 }
 
@@ -704,6 +706,21 @@ function attachButtons() {
   document.getElementById("lang-toggle").addEventListener("click", () => {
     lang = lang === "en" ? "zh" : "en";
     applyLang();
+  });
+
+  // Button Points: keyboard shortcuts to add score during competitive play
+  const BUTTON_POINTS_MAP = {
+    "1": [0, 1], "2": [0, 2], "3": [0, 3], "4": [0, 4],
+    "q": [1, 1], "w": [1, 2], "e": [1, 3], "r": [1, 4],
+  };
+  document.addEventListener("keydown", e => {
+    if (!buttonPoints) return;
+    if (lastMode !== "competitive" || lastPhase !== "playing") return;
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    const mapping = BUTTON_POINTS_MAP[e.key.toLowerCase()];
+    if (!mapping) return;
+    e.preventDefault();
+    sendAction("add_score", { team: mapping[0], amount: mapping[1] });
   });
 }
 
