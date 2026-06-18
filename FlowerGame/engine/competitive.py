@@ -1,3 +1,49 @@
+"""
+Two-team competitive FlowerController for the FlowerGame.
+
+This module implements the competitive game mode where players split into two
+teams and race to grow more flowers before the countdown timer expires.
+
+Key classes:
+    TeamState                    : Holds one team's score, per-device state,
+                                   similarity tracking, and plant computation.
+    CompetitiveFlowerController  : Top-level controller managing the full game
+                                   lifecycle: instructor_select -> team_select
+                                   -> playing -> won.
+
+Phase flow (competitive mode):
+    waiting
+      -> instructor_select  -- one pod shakes to become the instructor
+      -> team_select step 0 -- pods shake to join Team 1
+      -> team_select step 1 -- pods shake to join Team 2 (via next_team())
+      -> playing            -- timer starts (via begin_game())
+      -> won                -- timer expires; highest-scoring team wins
+
+Similarity scoring:
+    Same axis-by-axis comparison as single mode (see similarity.py), but each
+    team accumulates score independently via its own TeamState.
+
+Late-joiner handling:
+    Pods that connect during "playing" are auto-assigned to the smaller team.
+
+Winner determination:
+    Higher score wins.  Ties result in winner=None.
+
+Button Points:
+    The facilitator can manually add points to either team via keyboard keys
+    (1-4 for Team 1, q-w-e-r for Team 2) when button_points is enabled.
+
+Dependencies:
+    - .controller  : DeviceState, _REFERENCE_HISTORY, _TIME_MILESTONES.
+    - .similarity  : best_similarity, merge_windows, update_gravity_estimate.
+    - .motion      : selection_motion_score for instructor/team selection.
+    - ble.constants: VIBR_TEAM1/2, VIBR_WIN, VIBR_FLOWER_50, VIBR_LAST_10.
+
+How it fits into Pebble:
+    FlowerWSServer creates a CompetitiveFlowerController when the dashboard
+    sends {"action":"start","mode":"competitive"}.
+"""
+
 from __future__ import annotations
 
 import math

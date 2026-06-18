@@ -1,3 +1,48 @@
+"""
+Single-team (cooperative) FlowerController for the FlowerGame.
+
+This is the core game engine for the single/cooperative mode.  An instructor
+pod is selected first (by shaking); then all other pods become students whose
+movements are compared against the instructor via the similarity engine.
+
+Key classes:
+    DeviceState      : Dataclass tracking a pod's phase, gravity, similarity.
+    FlowerController : Top-level controller that manages the instructor,
+                       computes similarity scores for students, accumulates
+                       a shared score, manages the countdown timer, triggers
+                       vibration milestones, and broadcasts state via WebSocket.
+
+Similarity scoring flow:
+    1. Instructor shakes a pod -> selected via motion threshold.
+    2. Facilitator confirms -> phase becomes "playing", timer starts.
+    3. First 3 seconds: warmup (gravity EMA stabilises, no scoring).
+    4. Each student window is compared axis-by-axis (ax, ay, az) against the
+       instructor's recent windows (phase-compensated).
+    5. Score = growth_per_window * (similarity ^ exponent).
+
+Milestone vibration system:
+    - Time-based (50% and 75% of game duration elapsed).
+    - Score-based (every 50 flowers).
+    - Last-10-seconds warning.
+    Each triggers a vibration pattern sent to all connected pods.
+
+Plant computation:
+    Score / sprout_points_per_plant = number of flowers.  Dashboard renders
+    the garden from this list.
+
+Dependencies:
+    - ble.imu       : ImuWindow dataclass.
+    - ble.constants : Vibration pattern IDs (VIBR_*).
+    - .similarity   : compute_similarity, best_similarity, merge_windows.
+    - .motion       : selection_motion_score for instructor selection.
+
+How it fits into Pebble:
+    FlowerWSServer creates a FlowerController when the dashboard sends
+    {"action":"start","mode":"single"}.  process_imu_window() is called
+    from BLE notification callbacks.  get_state() is called every
+    broadcast_interval_s to push game state to the dashboard.
+"""
+
 from __future__ import annotations
 
 import time

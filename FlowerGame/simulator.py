@@ -1,6 +1,25 @@
 """
-Simulated pods - generates synthetic IMU windows so the game can be tested
-without physical hardware. Run main.py with --simulate to use this.
+Simulated pods -- generates synthetic IMU windows so the FlowerGame can be
+tested without physical BLE hardware.  Run main.py with --simulate to use this.
+
+How it works:
+    Each simulated pod is an async coroutine that emits one ImuWindow every
+    250ms (matching real firmware).  The synthetic acceleration is built from:
+        base_accel * effort_wave + jitter
+    - base_accel (~0.0): Mimics a pod at rest (gravity already removed).
+    - effort_wave: A slow sine oscillation simulating alternating effort.
+    - jitter: Random noise for realism.
+    Each pod gets a different phase_offset so their effort curves differ.
+
+Dependencies:
+    - asyncio : Concurrent pod tasks and sleep.
+    - math    : Sine function for the effort wave.
+    - random  : Jitter noise.
+
+How it fits into Pebble:
+    FlowerGame.main._run_with_simulator() calls run_simulated_pods(), passing
+    the FlowerWSServer as the controller.  Each simulated pod calls
+    controller.process_imu_window() on each tick, exactly as a real BLE client.
 """
 from __future__ import annotations
 

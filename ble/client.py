@@ -1,3 +1,29 @@
+"""
+BLE client that manages a persistent connection to a single Pebble sensor pod.
+
+One PebbleClient instance is created per discovered pod.  It handles three jobs:
+
+    1. **Receive IMU data** -- subscribes to GATT notifications on the IMU
+       characteristic.  The firmware sends a 20-byte packet every 250ms
+       containing ax, ay, az, gx, gy, gz, roll, pitch.  Each notification
+       is parsed into an ImuWindow and forwarded to the game controller.
+
+    2. **Send vibration commands** -- polls the controller for queued vibration
+       pattern IDs and writes each one to the pod's command characteristic.
+
+    3. **Auto-reconnect** -- if the BLE connection drops, waits and retries
+       indefinitely.  This makes the system resilient to range issues or
+       pod restarts.
+
+Dependencies:
+    - bleak : Cross-platform async BLE library (BleakClient).
+    - ble.imu : ImuWindow parsing from raw BLE bytes.
+
+How it fits into Pebble:
+    FlowerGame.main discovers pods via scanner.py, then creates one
+    PebbleClient per pod and runs them all as concurrent asyncio tasks.
+"""
+
 import asyncio
 import time
 
