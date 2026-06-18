@@ -1,5 +1,46 @@
 /* ============================================================
    Pebble Garden — Pixel Art Daytime Style
+   ============================================================
+
+   PURPOSE:
+     Complete visual styling for the Pebble Garden game dashboard.
+     Creates a cheerful, pixel-art-inspired daytime garden scene
+     with animated flowers, decorative trees, and overlay screens.
+
+   VISUAL DESIGN:
+     Layered composition:
+       - Background: SVG (game_background.svg) for sky and grass
+       - Middle ground: Pixel-art trees along the horizon
+       - Foreground: SVG flowers growing upward from grass
+       - Overlays: Dark panels for waiting, team selection, win
+
+   FONTS:
+     - "Cinzel Decorative" — ornate serif for titles/team labels
+     - "Nunito" — clean sans-serif for scores, buttons, labels
+
+   COLOR SCHEME:
+     - Sky: blue gradient (--sky-top to --sky-bottom)
+     - Ground: green (--ground and variants)
+     - Text: deep green (--text-dark, --text-mid)
+     - Team 1: blue #1870D8 / Team 2: orange #D84818
+
+   ANIMATION SYSTEM:
+     - Flower growth: CSS transition on .plant-clip height (2s)
+     - Flower sway: @keyframes plant-sway (4s when bloomed)
+     - Timer blink: @keyframes pixel-blink
+     - Win shimmer: @keyframes shimmer + pulse
+     - Confetti fall: @keyframes fall (particles with rotation)
+     - Team card glow: @keyframes ts-glow / ts-glow-orange
+     - Connection dot: @keyframes px-blink
+
+   SECTIONS:
+     1. Reset & CSS variables    8. Flower plants & animation
+     2. Scene & background       9. Waiting overlay
+     3. Header bar              10. Win overlay
+     4. Timer display           11. Confetti particles
+     5. Score display           12. Facilitator & conn dot
+     6. Background trees        13. Competitive split view
+     7. Garden container        14. Team selection overlay
    ============================================================ */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

@@ -1,3 +1,32 @@
+<!--
+  ============================================================================
+  GameDashboard/index.html — Pebble Garden Game Dashboard
+  ============================================================================
+
+  PURPOSE:
+    Single-page HTML for the Pebble Garden game dashboard. Provides the
+    complete UI structure for a collaborative flower-growing game where
+    participants shake physical "pods" (IMU sensor devices) to grow
+    virtual flowers on screen. Projected on a shared screen during sessions.
+
+  HOW IT WORKS:
+    - Loads static/style.css for visual styling, static/game.js for all logic.
+    - game.js connects to the Python WebSocket server (ws://localhost:8765)
+      which sends game state updates every ~150ms.
+    - HTML defines layered UI sections that game.js shows/hides by phase.
+
+  STRUCTURE:
+    1. MAIN SCENE (#scene) — Header, score, trees, flower gardens
+    2. WAITING OVERLAY — Duration/mode picker, start button, language toggle
+    3. TEAM SELECTION OVERLAY — Competitive mode: shake to join teams
+    4. WIN OVERLAY — Final scores, confetti, play again button
+    5. UTILITY ELEMENTS — Facilitator shortcut, connection indicator, fullscreen
+
+  RELATIONSHIP TO PEBBLE:
+    Visual frontend receiving game state from the Python WebSocket server
+    which aggregates data from physical BLE sensor pods.
+  ============================================================================
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>

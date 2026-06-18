@@ -1,5 +1,47 @@
 /* =============================================================
    Pebble Garden — Game Dashboard Logic
+   =============================================================
+
+   PURPOSE:
+     All interactive logic for the Pebble Garden game dashboard:
+       - WebSocket connection to the Python game server
+       - Real-time game state rendering (flowers, scores, timer)
+       - UI phase transitions (waiting -> team_select -> playing -> won)
+       - SVG flower generation and growth animations
+       - Bilingual text support (English / Chinese)
+       - Facilitator button handlers (start, reset, mode, duration)
+       - Confetti celebration animation
+       - Fullscreen toggle
+
+   HOW IT WORKS:
+     On page load, connects to ws://localhost:8765. Server sends JSON
+     game state every ~150ms. Each message triggers updateGame(), which:
+       1. Determines mode (single vs competitive)
+       2. Updates pod count display
+       3. Routes to the phase handler (waiting, team_select, playing, won)
+       4. Updates flower gardens — spawning SVG flowers and animating
+          growth via CSS clip-height transitions
+
+   KEY DESIGN DECISIONS:
+     - Golden-ratio positioning (phi=0.618) for natural flower spread
+     - SVG flowers: 12 petal ellipses, stem, leaves, center. 10 colors.
+     - "Clip container" trick: outer div height transitions from 0,
+       revealing the flower from stem-up. Double rAF ensures paint.
+     - State diffing: only new flowers are spawned; existing updated.
+     - Button Points: keys 1-4 add to Team 1, q/w/e/r to Team 2.
+
+   DEPENDENCIES:
+     No external JS libraries. Pure vanilla JavaScript + native WebSocket.
+
+   SECTIONS:
+     1. STRINGS / i18n        9. Flower spawning
+     2. FLOWER_TYPES          10. WebSocket
+     3. Positioning            11. Main update (updateGame)
+     4. TREE_DEFS             12. Phase handlers
+     5. State variables       13. Garden updates
+     6. Bootstrap             14. UI helpers
+     7. Language toggle       15. Button handlers
+     8. Background trees      16-18. Confetti, fullscreen, conn dot
    ============================================================= */
 
 const WS_URL = "ws://localhost:8765";
