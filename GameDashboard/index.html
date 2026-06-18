@@ -1,43 +1,146 @@
+<!--
+  ============================================================================
+  GameDashboard/index.html — Pebble Garden Game Dashboard
+  ============================================================================
+
+  PURPOSE:
+    This is the single-page HTML file for the Pebble Garden game dashboard.
+    It provides the complete UI structure for a collaborative flower-growing
+    game where participants shake physical "pods" (sensor devices) to grow
+    virtual flowers on screen. The dashboard is projected or displayed on a
+    shared screen during classroom/workshop sessions.
+
+  HOW IT WORKS:
+    - The page loads two external resources: static/style.css for all visual
+      styling, and static/game.js for all interactive logic.
+    - game.js connects to a Python WebSocket server (ws://localhost:8765)
+      that aggregates sensor data from physical Pebble pods and sends
+      game state updates every ~150ms.
+    - The HTML defines several layered UI sections (scene, overlays) that
+      game.js shows/hides depending on the current game phase.
+
+  STRUCTURE (top to bottom):
+    1. MAIN SCENE (#scene)
+       - Header bar: title, pod count, timer, status badge
+       - Score display (#progress-wrap) for single-team mode
+       - Background trees layer (#trees-bg) for visual decoration
+       - Single-mode flower garden (#garden) where SVG flowers grow
+       - Competitive-mode split view (#competitive-view) with two
+         side-by-side team panels, each with its own garden
+
+    2. WAITING OVERLAY (#waiting-overlay)
+       - Shown before a game starts. Lets the facilitator choose:
+         game duration (30s / 1m / 2m / 5m), game mode (Single Team
+         or Multiplayer), and a Start Session button.
+       - Also contains a language toggle button (English / Chinese).
+
+    3. TEAM SELECTION OVERLAY (#team-select-overlay)
+       - Only used in competitive (multiplayer) mode.
+       - Two-step process: first Team 1 members shake pods to join,
+         then Team 2. Shows live counts per team with animated cards.
+       - "Next: Team 2" and "Let's Play!" buttons advance the flow.
+
+    4. WIN OVERLAY (#win-overlay)
+       - Displayed when the game timer expires. Shows final scores
+         and a confetti animation. "Play Again" button resets.
+
+    5. UTILITY ELEMENTS
+       - #facilitator-start: a subtle shortcut link at bottom-left
+         to start a session without opening the waiting overlay.
+       - #conn-dot: a small colored dot (bottom-right) indicating
+         WebSocket connection status (green = connected, red = not).
+       - #btn-fullscreen: a fullscreen toggle button (top-right),
+         always visible above all overlays.
+
+  FONTS:
+    - Google Fonts are loaded: "Cinzel Decorative" for decorative titles,
+      and "Nunito" for all other UI text.
+
+  BILINGUAL SUPPORT:
+    - All visible text is replaced dynamically by game.js based on the
+      selected language (English or Chinese). The HTML contains the
+      English defaults.
+
+  RELATIONSHIP TO PEBBLE PROJECT:
+    - This dashboard is the visual output layer of the Pebble system.
+    - It receives data from the Python WebSocket server, which in turn
+      collects sensor readings from physical Pebble pods via BLE.
+    - A separate LEDLight subsystem (ESP32S3 firmware) also receives
+      game state via BLE and drives a physical LED strip to mirror the
+      on-screen score ratio.
+  ============================================================================
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pebble Garden</title>
+  <!-- Preconnect to Google Fonts for faster font loading -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Load "Cinzel Decorative" (decorative titles) and "Nunito" (UI text) -->
   <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <!-- All visual styling for the game dashboard -->
   <link rel="stylesheet" href="static/style.css" />
 </head>
 <body>
 
-<!-- ── Main scene ─────────────────────────────────────────── -->
+<!-- ══════════════════════════════════════════════════════════════
+     MAIN SCENE — the in-game view with gardens, header, and trees.
+     This is the primary viewport visible during gameplay.
+     CSS class "competitive" is toggled on #scene by game.js to
+     switch between single-garden and split-view layouts.
+     ══════════════════════════════════════════════════════════════ -->
 <div id="scene">
 
-
-  <!-- Header row -->
+  <!-- ── Header bar ──────────────────────────────────────────
+       Top bar showing: game title (left), and status cluster (right)
+       containing pod count, countdown timer, and phase badge.
+       The timer is position:fixed so it stays centered on screen. -->
   <div id="header">
     <div id="title">🌸 Pebble Garden</div>
     <div id="status-area">
+      <!-- Shows how many physical Pebble pods are currently connected via BLE -->
       <div id="pod-count">No pods connected</div>
+      <!-- Countdown timer — hidden until "playing" phase, shows MM:SS format.
+           Turns red and blinks when <= 10 seconds remain. -->
       <div id="timer-display" class="hidden">--:--</div>
+      <!-- Phase badge — text and color change based on game phase:
+           "Ready" (waiting), "Growing!" (playing), "Time's Up!" (won) -->
       <div id="status-badge" class="waiting">Ready</div>
     </div>
   </div>
 
-  <!-- Single-mode score display -->
+  <!-- ── Score display (single-team mode only) ───────────────
+       Shows the cumulative team score as "Score: X pts".
+       Hidden in competitive mode via CSS (#scene.competitive #progress-wrap). -->
   <div id="progress-wrap">
     <div id="progress-label">Score: 0 pts</div>
   </div>
 
-  <!-- Background trees — always visible -->
+  <!-- ── Background trees ────────────────────────────────────
+       Decorative tree silhouettes positioned along the horizon.
+       game.js dynamically builds tree elements here using TREE_DEFS config.
+       Trees are purely decorative and have pointer-events: none. -->
   <div id="trees-bg"></div>
 
-  <!-- Single-mode flower garden -->
+  <!-- ── Single-mode flower garden ───────────────────────────
+       The main garden container for single-team mode.
+       game.js appends SVG flower elements here as the score increases.
+       Each flower grows upward from the bottom via a CSS clip animation.
+       Positioned at the bottom 47% of the viewport (the grass area). -->
   <div id="garden"></div>
 
-  <!-- Competitive-mode split view (shown via #scene.competitive class) -->
+  <!-- ── Competitive-mode split view ─────────────────────────
+       Two side-by-side team panels separated by a vertical divider.
+       Only visible when #scene has the "competitive" class.
+       Each panel has its own header (team name + score) and garden
+       container where that team's flowers grow independently.
+
+       Team 0 (left, blue) vs Team 1 (right, orange). -->
   <div id="competitive-view">
+    <!-- Team 1 panel (left side, blue-themed) -->
     <div class="team-panel" id="team-panel-0">
       <div class="team-header">
         <div class="team-label" id="team-label-0">Team 1</div>
@@ -46,8 +149,10 @@
       <div class="team-garden" id="garden-0"></div>
     </div>
 
+    <!-- Vertical divider line between the two team gardens -->
     <div class="team-divider"></div>
 
+    <!-- Team 2 panel (right side, orange-themed) -->
     <div class="team-panel" id="team-panel-1">
       <div class="team-header">
         <div class="team-label" id="team-label-1">Team 2</div>
@@ -59,11 +164,23 @@
 
 </div>
 
-<!-- ── Waiting / Start overlay ────────────────────────────── -->
+<!-- ══════════════════════════════════════════════════════════════
+     WAITING / START OVERLAY
+     Full-screen overlay shown before a game begins (phase = "waiting").
+     Provides the facilitator with configuration options and start button.
+     Hidden by adding the "hidden" class when game transitions to "playing".
+     Dark background for maximum contrast with the bright UI elements.
+     ══════════════════════════════════════════════════════════════ -->
 <div id="waiting-overlay">
+  <!-- Large decorative title with gold gradient effect -->
   <div id="waiting-title">🌱 Pebble Garden</div>
+  <!-- Instructional subtitle for participants -->
   <div id="waiting-sub">Pick up your pods and get ready to grow!</div>
 
+  <!-- ── Duration selector ─────────────────────────────────
+       Four preset duration buttons. The "active" class highlights
+       the currently selected duration. Default is 2 minutes (120s).
+       data-secs attribute holds the duration in seconds, read by game.js. -->
   <div id="duration-select">
     <div id="duration-label">Game Duration</div>
     <div id="duration-buttons">
@@ -74,26 +191,51 @@
     </div>
   </div>
 
+  <!-- ── Mode selector ───────────────────────────────────────
+       Toggle between "Single Team" (all pods contribute to one garden)
+       and "Multiplayer" (competitive mode with two separate teams).
+       In competitive mode, a team-selection phase follows before play. -->
   <div id="mode-select">
     <button class="mode-btn active" id="btn-mode-single">Single Team</button>
     <button class="mode-btn" id="btn-mode-competitive">Multiplayer</button>
   </div>
 
+  <!-- Main start button — sends "start" action with selected mode + duration to WebSocket server -->
   <button id="btn-start">Start Session</button>
+  <!-- Language toggle — switches all UI text between English and Chinese -->
   <button id="lang-toggle" title="Switch language / 切换语言">中文</button>
 </div>
 
-<!-- ── Team selection overlay (competitive only) ─────────── -->
+<!-- ══════════════════════════════════════════════════════════════
+     TEAM SELECTION OVERLAY (competitive mode only)
+     Two-step team assignment process for multiplayer games:
+       Step 0: Participants shake pods to join Team 1. Facilitator
+               clicks "Next: Team 2" when done.
+       Step 1: Remaining participants shake pods to join Team 2.
+               Facilitator clicks "Let's Play!" to begin the game.
+     Each team card shows a live counter of joined members, with a
+     bounce animation on each new join. Cards transition through
+     states: active (accepting) -> locked/full -> waiting.
+     ══════════════════════════════════════════════════════════════ -->
 <div id="team-select-overlay">
+  <!-- Dynamic title — updated by game.js to show which team is currently recruiting -->
   <div id="ts-title">Team 1 — Join Up! 🔵</div>
+  <!-- Instruction telling participants what to do (shake their pods) -->
   <div id="ts-subtitle">Shake your weights to join Team 1!</div>
 
+  <!-- ── Team cards ────────────────────────────────────────
+       Side-by-side cards showing each team's recruitment status.
+       CSS classes control visual state: ts-active (glowing, accepting),
+       ts-locked (dimmed, done), ts-waiting (very dim, not yet active),
+       ts-full (green, quota reached). -->
   <div id="ts-cards">
+    <!-- Team 1 card — active during step 0, locked during step 1 -->
     <div class="ts-card" id="ts-card-0">
       <div class="ts-card-name" id="ts-card-name-0">Team 1</div>
       <div class="ts-count" id="ts-count-0">0</div>
       <div class="ts-card-label" id="ts-card-label-0">shaking in</div>
     </div>
+    <!-- Team 2 card — waiting during step 0, active during step 1 -->
     <div class="ts-card" id="ts-card-1">
       <div class="ts-card-name" id="ts-card-name-1">Team 2</div>
       <div class="ts-count" id="ts-count-1">0</div>
@@ -101,26 +243,51 @@
     </div>
   </div>
 
+  <!-- Step 0 button: advance to Team 2 recruitment. Hidden during step 1. -->
   <button id="btn-next-team">Next: Team 2 →</button>
+  <!-- Step 1 button: finalize teams and start the competitive game. Hidden during step 0. -->
   <button id="btn-begin-game">Let's Play! 🌸</button>
 </div>
 
-<!-- ── Win overlay ────────────────────────────────────────── -->
+<!-- ══════════════════════════════════════════════════════════════
+     WIN OVERLAY
+     Full-screen overlay displayed when the game timer runs out
+     (phase = "won"). Shows final results:
+       - Single mode: "Time's Up!" with final score
+       - Competitive mode: winning team announcement with both scores,
+         or "It's a Tie!" if scores are equal
+     game.js also triggers a confetti animation (100 falling particles)
+     when this overlay first appears. "Play Again" resets the game.
+     ══════════════════════════════════════════════════════════════ -->
 <div id="win-overlay">
+  <!-- Animated title with shimmer gradient and pulse effect -->
   <div id="win-title">🌸 Full Bloom! 🌸</div>
+  <!-- Final score summary — text set dynamically by game.js -->
   <div id="win-sub">Amazing work — the garden is complete!</div>
+  <!-- Reset button — sends "reset" action to WebSocket server, returns to waiting phase -->
   <button id="btn-reset">Play Again</button>
 </div>
 
-<!-- ── Facilitator shortcut ───────────────────────────────── -->
+<!-- ══════════════════════════════════════════════════════════════
+     UTILITY ELEMENTS — small persistent UI helpers
+     ══════════════════════════════════════════════════════════════ -->
+
+<!-- Facilitator shortcut — subtle link at bottom-left corner.
+     Clicking it sends a "start" action, same as the main Start button.
+     Useful when the waiting overlay is not visible (e.g., during a game). -->
 <div id="facilitator-start" title="Start a new session">▶ Start session</div>
 
-<!-- ── Connection indicator ───────────────────────────────── -->
+<!-- WebSocket connection indicator — small square dot at bottom-right.
+     Green when connected to the Python server, red (blinking) when disconnected.
+     Styled via CSS classes "connected" / "disconnected", set by game.js. -->
 <div id="conn-dot" title="WebSocket connection"></div>
 
-<!-- ── Fullscreen button — always on top ─────────────────── -->
+<!-- Fullscreen toggle button — fixed at top-right, z-index 300 so it
+     appears above all overlays. Shows expand icon normally, X when in
+     fullscreen. Uses the browser Fullscreen API. -->
 <button id="btn-fullscreen" title="Enter fullscreen (Esc to exit)">⛶</button>
 
+<!-- Load all game logic: WebSocket, state rendering, animations, i18n, button handlers -->
 <script src="static/game.js"></script>
 </body>
 </html>

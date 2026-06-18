@@ -1,6 +1,79 @@
 /* ============================================================
    Pebble Garden — Pixel Art Daytime Style
+   ============================================================
+
+   PURPOSE:
+     Complete visual styling for the Pebble Garden game dashboard.
+     Creates a cheerful, pixel-art-inspired daytime garden scene with
+     animated flowers, decorative trees, and multiple overlay screens.
+
+   VISUAL DESIGN:
+     The dashboard uses a layered composition:
+       - Background: An SVG image (game_background.svg) showing sky and grass
+       - Middle ground: Decorative pixel-art trees along the horizon
+       - Foreground: SVG flowers growing upward from the grass
+       - Overlays: Full-screen dark panels for waiting, team selection, and win screens
+
+     The pixel-art aesthetic is achieved through:
+       - image-rendering: pixelated (on root and specific elements)
+       - Flat colors with no gradients on trees/buttons
+       - Box shadows instead of drop shadows for a blocky feel
+       - border-radius: 0 on decorative elements (connection dot, confetti)
+
+   FONTS:
+     - "Cinzel Decorative" — ornate serif font for titles and team labels
+     - "Nunito" — clean sans-serif for all other text (scores, buttons, labels)
+
+   COLOR SCHEME:
+     - Sky: blue gradient (--sky-top to --sky-bottom) — used by background SVG
+     - Ground: green (--ground and variants) — CSS variable palette
+     - Text: deep green (--text-dark, --text-mid) for readable contrast
+     - Team 1 (blue): #1870D8 / Team 2 (orange): #D84818
+     - Overlays: near-black with slight green tint for forest mood
+
+   CSS CUSTOM PROPERTIES (defined in :root):
+     --sky-top, --sky-bottom: sky gradient colors
+     --ground, --ground-dark, --ground-mid: grass/earth colors
+     --text-dark, --text-mid: primary text colors
+     --gold: accent color for highlights
+
+   ANIMATION SYSTEM:
+     - Flower growth: CSS transition on .plant-clip height (2s ease-out)
+     - Flower sway: @keyframes plant-sway (4s oscillation when bloomed)
+     - Timer blink: @keyframes pixel-blink (urgent countdown)
+     - Win title shimmer: @keyframes shimmer + pulse
+     - Confetti fall: @keyframes fall (particles dropping with rotation)
+     - Team card glow: @keyframes ts-glow / ts-glow-orange (pulsing border)
+     - Count bump: @keyframes ts-bump (elastic scale on number change)
+     - Connection dot: @keyframes px-blink (disconnected indicator)
+
+   SECTIONS:
+     1. Reset & CSS variables
+     2. Scene & background
+     3. Header bar
+     4. Timer display (fixed center-top)
+     5. Score display
+     6. Background trees
+     7. Garden container
+     8. Flower plants & growth animation
+     9. Waiting overlay (start screen)
+    10. Win overlay (end screen)
+    11. Confetti particles
+    12. Facilitator shortcut & connection dot
+    13. Competitive split view
+    14. Team selection overlay
+
+   RELATIONSHIP TO PROJECT:
+     This stylesheet is loaded by GameDashboard/index.html and works
+     in tandem with GameDashboard/static/game.js, which dynamically
+     adds/removes CSS classes and creates DOM elements that rely on
+     these styles.
    ============================================================ */
+
+/* ─── Reset & CSS Custom Properties ─────────────────────────
+   Universal box-sizing reset and design-token variables.
+   image-rendering: pixelated gives a crisp, retro look to
+   small elements and prevents anti-aliasing blur. */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -18,12 +91,16 @@
   image-rendering: pixelated;
 }
 
+/* Full viewport height, no scrolling — the game fills the entire screen */
 html, body {
   height: 100%;
   overflow: hidden;
 }
 
 /* ─── Scene & Background ─────────────────────────────────── */
+/* The main game scene fills the entire viewport. The background SVG
+   (game_background.svg) provides the sky, clouds, hills, and grass.
+   Flexbox layout stacks child elements vertically (header -> score -> gardens). */
 
 #scene {
   position: relative;
@@ -37,11 +114,12 @@ html, body {
 }
 
 
-/* Hill ridge removed — background SVG provides the ground */
-
-/* Clouds are part of the background SVG */
+/* Note: Hill ridge and clouds are part of the background SVG, not CSS */
 
 /* ─── Header ─────────────────────────────────────────────── */
+/* Top bar spanning the full width with a semi-transparent white background.
+   Contains the game title (left) and status area (right: pod count + timer + badge).
+   z-index: 10 ensures it sits above the garden and trees. */
 
 #header {
   width: 100%;
@@ -55,6 +133,7 @@ html, body {
   border-bottom: 4px solid rgba(255,255,255,0.4);
 }
 
+/* Game title — decorative serif font with a subtle embossed text-shadow effect */
 #title {
   font-family: 'Cinzel Decorative', serif;
   font-size: 1.7rem;
@@ -64,12 +143,16 @@ html, body {
   letter-spacing: 1px;
 }
 
+/* Right-aligned cluster in the header: pod count, timer, phase badge */
 #status-area {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
+/* Status badge — pill-shaped label that changes color by game phase.
+   Three states: .waiting (white), .active (yellow/gold), .won (pink).
+   Transitions smoothly between colors on phase changes. */
 #status-badge {
   font-family: 'Nunito', sans-serif;
   font-size: 1rem;
@@ -86,6 +169,7 @@ html, body {
 #status-badge.won     { background: #FF80C0; color: #700040; border-color: #CC4090; }
 #status-badge.waiting { background: white; color: var(--text-mid); }
 
+/* Pod count indicator — shows how many BLE sensor pods are connected */
 #pod-count {
   font-size: 0.9rem;
   font-weight: 700;
@@ -97,6 +181,12 @@ html, body {
 }
 
 /* ─── Timer — fixed center top ───────────────────────────── */
+/* Countdown timer is position:fixed at the top center of the screen so
+   it stays visible regardless of scrolling or layout shifts.
+   z-index: 20 puts it above the header (10) but below overlays (100+).
+   Uses a white text-shadow "stroke" for readability against any background.
+   When .timer-urgent is added (<=10s remaining), turns red with a red
+   glow and blinks via pixel-blink animation. */
 
 #timer-display {
   position: fixed;
@@ -135,7 +225,10 @@ html, body {
 }
 @keyframes pixel-blink { 0%,100%{opacity:1} 50%{opacity:0.6} }
 
-/* ─── Score display ──────────────────────────────────────── */
+/* ─── Score display (single-team mode) ──────────────────── */
+/* Large score text shown below the header in single-team mode.
+   Hidden automatically in competitive mode by CSS rule
+   #scene.competitive #progress-wrap { display: none }. */
 
 #progress-wrap {
   position: relative;
@@ -153,6 +246,10 @@ html, body {
 }
 
 /* ─── Background trees ───────────────────────────────────── */
+/* Decorative tree silhouettes positioned along the horizon line.
+   Trees are built dynamically by game.js and placed at bottom: 32%
+   (the boundary between sky and grass in the background SVG).
+   pointer-events: none ensures they don't intercept clicks on flowers. */
 
 #trees-bg {
   position: absolute;
@@ -163,30 +260,43 @@ html, body {
   z-index: 2;
 }
 
+/* Each tree is wrapped in a positioned container that handles placement
+   and scaling. transform-origin: bottom center ensures scaling grows
+   the tree upward from its base rather than from the center. */
 .tree-wrap {
   position: absolute;
   bottom: 0;
   transform-origin: bottom center;
 }
 
+/* Tree structure: vertical flex column with canopy on top, trunk below */
 .tree {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
+/* Canopy: 3 overlapping layers stacked bottom-to-top (column-reverse).
+   Each layer is a flat-colored rectangle — no gradients, matching the
+   pixel art aesthetic. Negative margins create overlap for a bushy look. */
 .tree-canopy { display: flex; flex-direction: column-reverse; align-items: center; }
 
-/* Pixel art tree canopy layers — no gradients, flat colors */
+/* Layer 1 (bottom/largest): darkest green */
 .canopy-l1 { background: #2A7A18; }
+/* Layer 2 (middle): slightly lighter, overlaps layer 1 by 28% */
 .canopy-l2 { background: #348A20; margin-top: -28%; }
+/* Layer 3 (top/smallest): lightest green, overlaps layer 2 by 24% */
 .canopy-l3 { background: #44A028; margin-top: -24%; }
 
+/* Trunk: flat brown rectangle with sharp corners (border-radius: 0) */
 .tree-trunk { background: #7B4A18; border-radius: 0; }
 
 /* ─── Garden container ───────────────────────────────────── */
+/* The garden covers the bottom 47% of the viewport, which aligns with
+   the grass area in the background SVG. Flowers are absolutely positioned
+   within this container using percentage-based coordinates.
+   overflow: visible allows tall flowers to extend above the container. */
 
-/* height 47% = only the grass section of the background SVG */
 #garden {
   position: absolute;
   bottom: 0;
@@ -198,6 +308,10 @@ html, body {
 }
 
 /* ─── Flower plants ──────────────────────────────────────── */
+/* Each .plant is absolutely positioned within its garden container.
+   The left % is set by game.js using golden-ratio positioning.
+   translateX(-50%) centers the flower on its X coordinate.
+   overflow: visible ensures petals can extend beyond the plant bounds. */
 
 .plant {
   position: absolute;
@@ -206,21 +320,33 @@ html, body {
   overflow: visible;
 }
 
-/* Growing clip: height expands from 0 → full, revealing stalk first then petals.
-   Slow start (root emerging) → steady growth → quick finish (petals unfurling). */
+/* Growing clip container: this is the key element for the flower growth animation.
+   It starts with height: 0 (set inline by game.js), hiding the flower entirely.
+   When game.js sets the height to the full flower size, this CSS transition
+   smoothly expands it over 2 seconds with an ease-out curve:
+     - Slow start: the root/stem base emerges gradually
+     - Steady middle: the stem grows upward at a natural pace
+     - Quick finish: petals unfurl rapidly at the top
+   The SVG inside is anchored to the bottom, so as this clip grows, the
+   flower is revealed from stem-bottom to petal-top. */
 .plant-clip {
   overflow: hidden;
   transition: height 2s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-/* When bloomed: unlock overflow so petals don't get cut during the sway rotation */
+/* When a flower reaches full growth (growth >= 0.98), the "bloomed" class is added.
+   This switches the clip from overflow:hidden to overflow:visible so petals aren't
+   cut off during the sway rotation. A golden drop-shadow filter adds a warm glow. */
 .plant.bloomed .plant-clip {
   overflow: visible;
   filter: drop-shadow(0 0 8px rgba(255,220,80,0.5));
 }
 
-/* Sway on the outer .plant so the whole thing rotates from its base.
-   Keeping it off the SVG (which is inside the clip) avoids any clipping. */
+/* Gentle swaying animation for bloomed flowers — the entire .plant element
+   rotates back and forth by 2 degrees, creating a wind-blown effect.
+   Applied to the outer .plant (not the SVG inside) so the rotation pivot
+   is at the flower's base (transform-origin: bottom center).
+   This must be on .plant, not .plant-clip, to avoid clipping artifacts. */
 .plant.bloomed {
   animation: plant-sway 4s ease-in-out infinite;
   transform-origin: bottom center;
@@ -232,7 +358,13 @@ html, body {
   70%      { transform: translateX(-50%) rotate(-2deg); }
 }
 
-/* ─── Waiting overlay ────────────────────────────────────── */
+/* ─── Waiting overlay (pre-game start screen) ───────────── */
+/* Full-screen overlay shown before a game starts. Uses a near-black
+   background (#060e04) for maximum contrast with the bright UI elements.
+   Centered flex layout stacks title, subtitle, duration picker, mode
+   selector, start button, and language toggle vertically.
+   z-index: 100 places it above the game scene but below the win overlay.
+   Fades out with opacity transition when "hidden" class is added. */
 
 #waiting-overlay {
   position: fixed;
@@ -249,6 +381,9 @@ html, body {
 }
 #waiting-overlay.hidden { opacity: 0; pointer-events: none; }
 
+/* Large decorative title with a gold gradient text effect.
+   Uses background-clip: text trick to fill text with a gradient.
+   drop-shadow filter adds a warm golden glow around the text. */
 #waiting-title {
   font-family: 'Cinzel Decorative', serif;
   font-size: 6rem;
@@ -262,6 +397,7 @@ html, body {
   line-height: 1.2;
 }
 
+/* Instructional subtitle — pure white text for maximum readability on dark bg */
 #waiting-sub {
   font-size: 2.4rem;
   font-weight: 700;
@@ -271,7 +407,7 @@ html, body {
   line-height: 1.5;
 }
 
-/* Duration selector */
+/* Duration selector — vertical stack with label on top, buttons below */
 #duration-select {
   display: flex;
   flex-direction: column;
@@ -289,6 +425,9 @@ html, body {
 
 #duration-buttons { display: flex; gap: 16px; }
 
+/* Duration buttons — blocky pixel-art style with box-shadow "depth".
+   .active state: green background with green glow.
+   Hover state: brighter background and white border. */
 .dur-btn {
   padding: 22px 42px;
   font-family: 'Nunito', sans-serif;
@@ -315,9 +454,12 @@ html, body {
   box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
 }
 
-/* Mode selector */
+/* Mode selector — horizontal row of "Single Team" and "Multiplayer" buttons */
 #mode-select { display: flex; gap: 20px; }
 
+/* Mode buttons — similar pixel-art style to duration buttons.
+   .active state: blue background with blue glow.
+   Larger than duration buttons for visual hierarchy. */
 .mode-btn {
   padding: 26px 64px;
   font-family: 'Nunito', sans-serif;
@@ -343,7 +485,9 @@ html, body {
   color: #ffffff;
 }
 
-/* Start button */
+/* Start button — the largest, most prominent button on the waiting overlay.
+   Green background matching the garden theme, with a pixel-art box-shadow
+   that shifts on hover (raised effect) and active (pressed effect). */
 #btn-start {
   padding: 32px 112px;
   font-family: 'Nunito', sans-serif;
@@ -369,7 +513,9 @@ html, body {
   box-shadow: 2px 2px 0 #1E6000;
 }
 
-/* Language toggle */
+/* Language toggle button — switches between English and Chinese.
+   Subtle styling (transparent-ish background) so it doesn't compete
+   with the Start button for attention. */
 #lang-toggle {
   font-family: 'Nunito', sans-serif;
   font-size: 1.6rem;
@@ -389,7 +535,12 @@ html, body {
   color: #ffffff;
 }
 
-/* ─── Win overlay ────────────────────────────────────────── */
+/* ─── Win overlay (game-over screen) ─────────────────────── */
+/* Full-screen overlay shown when the game timer runs out (phase = "won").
+   Dark green-tinted background with backdrop blur.
+   z-index: 200 — above everything except the fullscreen button (300).
+   Starts invisible (opacity: 0, pointer-events: none) and fades in
+   when the "visible" class is added by game.js. */
 
 #win-overlay {
   position: fixed;
@@ -408,6 +559,11 @@ html, body {
 }
 #win-overlay.visible { opacity: 1; pointer-events: auto; }
 
+/* Win title — ornate text with an animated rainbow-gold gradient.
+   Uses background-clip: text for the gradient fill effect.
+   Two animations run simultaneously:
+     - shimmer: slides the gradient background position back and forth
+     - pulse: gently scales the text up and down for emphasis */
 #win-title {
   font-family: 'Cinzel Decorative', serif;
   font-size: 6rem;
@@ -426,6 +582,9 @@ html, body {
   50%      { background-position: 100%; }
 }
 
+/* Win subtitle — shows final score(s). white-space: pre-line allows the
+   text to render \n characters as line breaks (used for multi-line
+   competitive scores: "Team 1: X pts\nTeam 2: Y pts"). */
 #win-sub {
   font-size: 2.4rem;
   font-weight: 700;
@@ -435,6 +594,8 @@ html, body {
   line-height: 1.6;
 }
 
+/* "Play Again" button — hot pink color to distinguish it from the green
+   Start button. Same pixel-art box-shadow raise/press effect. */
 #btn-reset {
   padding: 28px 80px;
   font-family: 'Nunito', sans-serif;
@@ -454,6 +615,12 @@ html, body {
 #btn-reset:active { transform: translate(2px,2px);  box-shadow: 2px 2px 0 #880050; }
 
 /* ─── Confetti ───────────────────────────────────────────── */
+/* Confetti particles created by game.js launchConfetti().
+   Each particle is a small fixed-position div that starts above the
+   viewport (top: -14px) and falls down via the "fall" animation.
+   CSS custom properties --dur and --delay are set per-particle by JS
+   for randomized timing. z-index: 201 places them above the win overlay.
+   image-rendering: pixelated maintains the crisp pixel-art look. */
 
 .confetti {
   position: fixed; top: -14px; width: 10px; height: 10px;
@@ -467,8 +634,11 @@ html, body {
   100% { opacity:0; transform: translateY(108vh) rotate(540deg); }
 }
 
-/* ─── Facilitator / connection ───────────────────────────── */
+/* ─── Facilitator shortcut & connection indicator ────────── */
 
+/* Facilitator start link — nearly invisible text at bottom-left.
+   Very low opacity (0.45) so it doesn't distract participants, but
+   the facilitator knows where to find it. Brightens on hover. */
 #facilitator-start {
   position: fixed; bottom: 12px; left: 16px;
   font-size: 0.8rem; font-weight: 600;
@@ -477,6 +647,9 @@ html, body {
 }
 #facilitator-start:hover { color: rgba(80,140,40,0.85); }
 
+/* Fullscreen toggle button — fixed top-right, always accessible.
+   z-index: 300 ensures it's above ALL overlays (win=200, waiting=100).
+   Semi-transparent dark background with white border and text. */
 #btn-fullscreen {
   position: fixed;
   top: 14px;
@@ -498,6 +671,10 @@ html, body {
   border-color: rgba(255,255,255,0.8);
 }
 
+/* WebSocket connection indicator dot — small square at bottom-right.
+   .connected: green with a soft glow (all is well)
+   .disconnected: red with a blinking animation (connection lost)
+   border-radius: 0 and image-rendering: pixelated for pixel-art style. */
 #conn-dot {
   position: fixed; bottom: 14px; right: 16px;
   width: 10px; height: 10px; border-radius: 0;
@@ -509,6 +686,13 @@ html, body {
 @keyframes px-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 
 /* ─── Competitive split view ─────────────────────────────── */
+/* In competitive mode, the single garden and score display are hidden,
+   and a side-by-side two-panel layout is shown instead.
+   The toggle is controlled by the "competitive" class on #scene:
+     #scene.competitive #competitive-view { display: flex }
+     #scene.competitive #garden { display: none }
+     #scene.competitive #progress-wrap { display: none }
+   Each team gets half the screen with their own garden and score. */
 
 #competitive-view {
   display: none;
@@ -522,6 +706,8 @@ html, body {
 #scene.competitive #garden           { display: none; }
 #scene.competitive #progress-wrap    { display: none; }
 
+/* Each team panel takes up half the available width (flex: 1).
+   Contains a header (team name + score) and a garden area. */
 .team-panel {
   flex: 1;
   position: relative;
@@ -532,6 +718,7 @@ html, body {
   overflow: visible;
 }
 
+/* Vertical divider between the two team panels — a thin glowing white line */
 .team-divider {
   width: 4px;
   align-self: stretch;
@@ -540,6 +727,8 @@ html, body {
   z-index: 10;
 }
 
+/* Team header — centered above each team's garden, showing team name and score.
+   margin-top: 80px provides clearance for the main header bar above. */
 .team-header {
   width: 100%;
   padding: 10px 20px 6px;
@@ -552,6 +741,10 @@ html, body {
   margin-top: 80px;
 }
 
+/* Team name label — decorative serif font with embossed text-shadow.
+   Color differs by team:
+     Team 0 (left panel) = blue (#1870D8)
+     Team 1 (right panel) = orange (#D84818) */
 .team-label {
   font-family: 'Cinzel Decorative', serif;
   font-size: 1.25rem;
@@ -561,6 +754,7 @@ html, body {
 #team-panel-0 .team-label { color: #1870D8; }
 #team-panel-1 .team-label { color: #D84818; }
 
+/* Team score — large bold number, color-matched to the team */
 .team-score-label {
   font-family: 'Nunito', sans-serif;
   font-size: 2.3rem;
@@ -570,6 +764,8 @@ html, body {
 #team-panel-0 .team-score-label { color: #1870D8; }
 #team-panel-1 .team-score-label { color: #D84818; }
 
+/* Team garden — same dimensions as the single-mode #garden (bottom 47%).
+   Each team's flowers grow in their own separate garden container. */
 .team-garden {
   position: absolute;
   bottom: 0; left: 0; right: 0;
@@ -579,6 +775,10 @@ html, body {
 }
 
 /* ─── Team selection overlay ─────────────────────────────── */
+/* Full-screen overlay used for the competitive-mode team assignment phase.
+   z-index: 110 places it above the waiting overlay (100) but below the
+   win overlay (200). Same dark green-tinted background as the win overlay.
+   Fades in/out via opacity transition when "visible" class is toggled. */
 
 #team-select-overlay {
   position: fixed; inset: 0;
@@ -591,6 +791,7 @@ html, body {
 }
 #team-select-overlay.visible { opacity: 1; pointer-events: auto; }
 
+/* Team selection title — gold gradient text like the waiting overlay title */
 #ts-title {
   font-family: 'Cinzel Decorative', serif;
   font-size: 2.8rem; font-weight: 700;
@@ -601,14 +802,19 @@ html, body {
   text-align: center;
 }
 
+/* Team selection subtitle — instructional text in a soft green-white color */
 #ts-subtitle {
   font-size: 1.5rem; font-weight: 600;
   color: rgba(200,255,180,0.85);
   text-align: center; margin-top: -14px;
 }
 
+/* Card container — horizontal layout with spacing between the two team cards */
 #ts-cards { display: flex; gap: 36px; }
 
+/* Base team card style — a rounded, semi-transparent box showing the team
+   name, member count, and status label. Transitions enable smooth state
+   changes (scale, shadow, opacity) when switching between card states. */
 .ts-card {
   width: 210px; padding: 26px 22px;
   border-radius: 6px; border: 4px solid rgba(255,255,255,0.12);
@@ -618,31 +824,44 @@ html, body {
   box-shadow: 5px 5px 0 rgba(0,0,0,0.3);
 }
 
+/* Card sub-elements: team name (decorative font), big count number, and status label */
 .ts-card-name { font-family: 'Cinzel Decorative', serif; font-size: 1.1rem; font-weight: 700; color: rgba(220,255,200,0.9); }
 .ts-count     { font-family: 'Nunito', sans-serif; font-size: 4.5rem; font-weight: 900; line-height: 1; color: #fff; }
 .ts-card-label { font-size: 0.95rem; font-weight: 600; color: rgba(180,255,160,0.7); }
 
+/* Active state — this team is currently accepting members.
+   Blue glow for Team 0, orange glow for Team 1 (overridden below).
+   Scaled up slightly (1.06) to draw attention, with a pulsing glow animation. */
 .ts-card.ts-active {
   border-color: #1A88FF; transform: scale(1.06);
   box-shadow: 5px 5px 0 rgba(0,0,0,0.3), 0 0 28px rgba(30,140,255,0.5);
   animation: ts-glow 1.6s ease-in-out infinite;
 }
+/* Active card text turns light blue to match the card's glow */
 .ts-card.ts-active .ts-card-name { color: #80CCFF; }
 .ts-card.ts-active .ts-count     { color: #80CCFF; }
+/* Team 2 active override: orange glow instead of blue */
 #ts-card-1.ts-active {
   border-color: #FF6020;
   box-shadow: 5px 5px 0 rgba(0,0,0,0.3), 0 0 28px rgba(255,100,30,0.5);
   animation-name: ts-glow-orange;
 }
+/* Team 2 active text turns light orange */
 #ts-card-1.ts-active .ts-card-name,
 #ts-card-1.ts-active .ts-count { color: #FFB080; }
 
+/* Pulsing glow animations for active cards — the box-shadow oscillates
+   between a subtle glow and a strong glow to draw attention. */
 @keyframes ts-glow        { 0%,100%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 16px rgba(30,140,255,0.4)} 50%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 36px rgba(30,140,255,0.8)} }
 @keyframes ts-glow-orange { 0%,100%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 16px rgba(255,100,30,0.4)} 50%{box-shadow:5px 5px 0 rgba(0,0,0,0.3),0 0 36px rgba(255,100,30,0.8)} }
 
+/* Locked state — team assignment is complete, card is dimmed */
 .ts-card.ts-locked { opacity: 0.6; border-color: rgba(255,255,255,0.1); transform: none; }
+/* Waiting state — team hasn't started recruiting yet, very dim */
 .ts-card.ts-waiting { opacity: 0.3; transform: none; }
 
+/* Full state — team reached its member quota. Green border and text
+   to indicate "done" status. No animation, static appearance. */
 .ts-card.ts-full {
   border-color: #44CC44; animation: none; transform: none;
   box-shadow: 5px 5px 0 rgba(0,0,0,0.3), 0 0 24px rgba(68,204,68,0.45);
@@ -651,9 +870,14 @@ html, body {
 .ts-card.ts-full .ts-count,
 .ts-card.ts-full .ts-card-label { color: #88EE88; }
 
+/* Bounce animation for member count — triggered by game.js when a new
+   member joins. Elastic overshoot (scale to 1.5, bounce back through 0.9). */
 @keyframes ts-bump { 0%{transform:scale(1)} 40%{transform:scale(1.5)} 70%{transform:scale(0.9)} 100%{transform:scale(1)} }
 .ts-count-bump { animation: ts-bump 0.4s cubic-bezier(0.34,1.8,0.64,1); }
 
+/* Team selection action buttons — "Next: Team 2" (blue) and "Let's Play!" (green).
+   Same pixel-art box-shadow style as other buttons. Only one is visible at a time
+   (controlled by game.js based on team_select_step). */
 #btn-next-team, #btn-begin-game {
   padding: 20px 64px;
   font-family: 'Nunito', sans-serif; font-size: 1.6rem; font-weight: 900;
@@ -672,8 +896,10 @@ html, body {
 #btn-next-team:hover, #btn-begin-game:hover   { transform: translate(-2px,-2px); }
 #btn-next-team:active, #btn-begin-game:active { transform: translate(2px,2px); }
 
-/* Duration selector in team-select (reuse waiting overlay styles) */
+/* Note: Duration selector within team-select reuses the waiting overlay styles above */
 
-/* ─── Shared ─────────────────────────────────────────────── */
+/* ─── Shared animations ─────────────────────────────────── */
+/* Gentle pulsing scale animation — used by the win title
+   to create a breathing/heartbeat effect on the victory text. */
 
 @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
