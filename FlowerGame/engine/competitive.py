@@ -1,41 +1,56 @@
 from __future__ import annotations
 
+import math
 import random
 import time
+from collections import deque
+
+from ble.constants import VIBR_FLOWER_50, VIBR_LAST_10, VIBR_MILESTONE2, VIBR_MILESTONE3, VIBR_TEAM1, VIBR_TEAM2, VIBR_WIN
+from ble.imu import ImuWindow
 
 from ..config.config import FlowerConfig
-from .controller import PersonGrowthTracker, _TIME_MILESTONES
-from ble.constants import (VIBR_TEAM1, VIBR_TEAM2, VIBR_WIN, VIBR_FLOWER_50, VIBR_LAST_10)
+from .controller import DeviceState, _REFERENCE_HISTORY, _TIME_MILESTONES
+from .motion import selection_motion_score
+from .similarity import SimilarityResult, best_similarity, fallback_score, merge_windows, update_gravity_estimate
 
 
 class TeamState:
-    """Score state for one team in competitive mode."""
-
     def __init__(self, team_id: int, config: FlowerConfig) -> None:
         self.team_id = team_id
         self._config = config
-        self._trackers: dict[str, PersonGrowthTracker] = {}
-        self._score:         float = 0.0
-        self._flower_milestone: int = 0   # how many 50-flower marks passed
+        self._devices: dict[str, DeviceState] = {}
+        self._score: float = 0.0
+        self._flower_milestone: int = 0
+        self._student_accum: dict[str, list[ImuWindow]] = {}
 
-    def process_window(self, device_name: str, window_sum: float) -> bool:
-        """Returns True if a 50-flower milestone was just crossed."""
-        if device_name not in self._trackers:
-            print(f"[{device_name}] Team {self.team_id + 1} — collecting baseline")
-            self._trackers[device_name] = PersonGrowthTracker(self._config)
+    def update_gravity(self, device_name: str, window: ImuWindow, alpha: float) -> tuple[float, float, float]:
+        state = self._devices.setdefault(device_name, DeviceState())
+        state.gravity = update_gravity_estimate(
+            state.gravity, (window.ax, window.ay, window.az), alpha, state.gravity_initialized)
+        state.gravity_initialized = True
+        return state.gravity
 
-        delta = self._trackers[device_name].process_window(window_sum)
+    def apply_similarity(self, device_name: str, result: SimilarityResult) -> bool:
+        state = self._devices.setdefault(device_name, DeviceState())
+        growth_score = result.score ** self._config.similarity_growth_exponent
+        delta = self._config.growth_per_window * growth_score
+        self._score = max(0.0, self._score + delta)
 
-        if delta != 0:
-            self._score = max(0.0, self._score + delta)
-            arrow = "↑" if delta > 0 else "↓"
-            print(f"[Team {self.team_id + 1}][{device_name}] "
-                  f"{arrow}{abs(delta):.1f} → {self._score:.1f}")
+        state.phase = "matching" if result.score >= 0.65 else "following"
+        state.ready = True
+        state.similarity = result.score
+        state.direction_score = result.direction_score
+        state.magnitude_score = result.magnitude_score
+
+        print(
+            f"[Team {self.team_id + 1}][{device_name}] similarity={result.score:.2f} "
+            f"+{delta:.1f} -> {self._score:.1f}"
+        )
 
         current = int(self._score / 50)
         if current > self._flower_milestone:
             self._flower_milestone = current
-            print(f"[Team {self.team_id + 1}] {current * 50} flowers — happy vibration!")
+            print(f"[Team {self.team_id + 1}] {current * 50} flowers - happy vibration!")
             return True
         return False
 
@@ -45,59 +60,77 @@ class TeamState:
 
     @property
     def progress(self) -> float:
-        return 0.0   # progress bar removed — flowers are unlimited
+        return 0.0
 
     def get_state(self) -> dict:
         return {
-            "id":          self.team_id,
-            "score":       int(self._score),
-            "progress":    round(self.progress, 4),
-            "num_devices": len(self._trackers),
-            "devices":     {n: {"phase": t.state.phase, "ready": t.is_ready}
-                            for n, t in self._trackers.items()},
-            "plants":      self._compute_plants(),
+            "id": self.team_id,
+            "score": int(self._score),
+            "similarity": self._average_similarity(),
+            "progress": round(self.progress, 4),
+            "num_devices": len(self._devices),
+            "devices": {
+                name: {
+                    "phase": state.phase,
+                    "ready": state.ready,
+                    "similarity": round(state.similarity, 3),
+                    "direction_score": round(state.direction_score, 3),
+                    "magnitude_score": round(state.magnitude_score, 3),
+                }
+                for name, state in self._devices.items()
+            },
+            "plants": self._compute_plants(),
         }
 
+    def reset(self) -> None:
+        self._devices.clear()
+        self._score = 0.0
+        self._flower_milestone = 0
+        self._student_accum.clear()
+
+    def _average_similarity(self) -> float:
+        values = [state.similarity for state in self._devices.values() if state.ready]
+        if not values:
+            return 0.0
+        return round(sum(values) / len(values), 3)
+
     def _compute_plants(self) -> list[dict]:
-        pts      = self._config.sprout_points_per_plant
+        pts = self._config.sprout_points_per_plant
         num_full = int(self._score / pts)
-        partial  = (self._score % pts) / pts
-        plants   = [{"id": i, "growth": 1.0} for i in range(num_full)]
+        partial = (self._score % pts) / pts
+        plants = [{"id": i, "growth": 1.0} for i in range(num_full)]
         if partial > 0.001:
             plants.append({"id": num_full, "growth": round(partial, 4)})
         return plants
 
-    def reset(self) -> None:
-        self._trackers.clear()
-        self._score = 0.0
-
 
 class CompetitiveFlowerController:
     """
-    Two-team timed competitive flower game.
+    Two-team instructor-following flower game.
 
     Phase flow:
-      waiting → team_select (step 0) → team_select (step 1) → playing → won
-
-    Game ends when the countdown timer expires.
-    Winner = team with higher score; tie = winner stays None.
+      waiting -> instructor_select -> team_select -> playing -> won
     """
 
     def __init__(self, config: FlowerConfig) -> None:
         self._config = config
-        self._teams        = [TeamState(0, config), TeamState(1, config)]
-        self._assignment:  dict[str, int] = {}
+        self._teams = [TeamState(0, config), TeamState(1, config)]
+        self._assignment: dict[str, int] = {}
         self._pending_vibrations: dict[str, list[int]] = {}
         self._connected_devices: set[str] = set()
-        self.phase:        str       = "waiting"
-        self.winner:       int | None = None
-        self._select_step: int       = 0
-        self._duration:    float     = 0.0
-        self._start_time:  float     = 0.0
+        self._instructor: str | None = None
+        self._instructor_gravity: tuple[float, float, float] = (0.0, 0.0, 1.0)
+        self._instructor_gravity_initialized: bool = False
+        self._reference: ImuWindow | None = None
+        self._reference_history: deque[ImuWindow] = deque(maxlen=_REFERENCE_HISTORY)
+        self._instructor_accum: list[ImuWindow] = []
+        self.phase: str = "waiting"
+        self.winner: int | None = None
+        self._select_step: int = 0
+        self._duration: float = 0.0
+        self._start_time: float = 0.0
         self._milestones_hit: set[float] = set()
-        self._last10_sent: bool      = False
-
-    # ── Time ──────────────────────────────────────────────────
+        self._last10_sent: bool = False
 
     @property
     def time_remaining(self) -> float:
@@ -106,122 +139,211 @@ class CompetitiveFlowerController:
         return max(0.0, self._duration - (time.monotonic() - self._start_time))
 
     @property
-    def _team1_quota(self) -> int:
-        return max(1, len(self._connected_devices) // 2)
-
-    # ── Controller interface ──────────────────────────────────
+    def _student_capacity(self) -> int:
+        return math.ceil(len(self._connected_devices) / 2)
 
     def process_window(self, device_name: str, window_sum: float) -> None:
-        if self.phase == "team_select":
-            self._handle_select(device_name, window_sum)
+        movement = max(0.0, window_sum / 300.0 - 1.0)
+        self.process_imu_window(
+            device_name,
+            ImuWindow(0, movement, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+
+    def process_imu_window(self, device_name: str, window: ImuWindow) -> None:
+        if self.phase == "instructor_select":
+            self._handle_instructor_select(device_name, window)
+        elif self.phase == "team_select":
+            self._handle_select(device_name, window)
         elif self.phase == "playing":
-            self._handle_playing(device_name, window_sum)
+            self._handle_playing(device_name, window)
 
     def start_session(self, duration_seconds: int) -> None:
-        self._teams               = [TeamState(0, self._config), TeamState(1, self._config)]
-        self._assignment          = {}
-        self._pending_vibrations  = {}
-        self._connected_devices   = set()
-        self._select_step         = 0
-        self.winner               = None
-        self.phase                = "team_select"
-        self._duration            = float(duration_seconds)
-        self._start_time          = 0.0   # timer starts in begin_game()
+        self._teams = [TeamState(0, self._config), TeamState(1, self._config)]
+        self._assignment = {}
+        self._pending_vibrations = {}
+        self._connected_devices = set()
+        self._instructor = None
+        self._instructor_gravity = (0.0, 0.0, 1.0)
+        self._instructor_gravity_initialized = False
+        self._reference = None
+        self._reference_history.clear()
+        self._instructor_accum = []
+        self._select_step = 0
+        self.winner = None
+        self.phase = "instructor_select"
+        self._duration = float(duration_seconds)
+        self._start_time = 0.0
         self._milestones_hit.clear()
-        self._last10_sent         = False
-        print("[GARDEN] Competitive session — team selection started (Team 1).")
+        self._last10_sent = False
+        print("[GARDEN] Competitive session - shake one pod to select the instructor.")
 
     def next_team(self) -> None:
         if self.phase == "team_select" and self._select_step == 0:
             self._select_step = 1
-            print("[GARDEN] Team 1 locked — now selecting Team 2.")
+            print("[GARDEN] Team 1 locked - now selecting Team 2.")
 
     def begin_game(self) -> None:
         if self.phase != "team_select":
             return
         t0 = sum(1 for t in self._assignment.values() if t == 0)
         t1 = sum(1 for t in self._assignment.values() if t == 1)
-        print(f"[GARDEN] Game starting — {int(self._duration)}s — "
-              f"Team 1: {t0}, Team 2: {t1} device(s).")
+        print(f"[GARDEN] Game starting - {int(self._duration)}s - Team 1: {t0}, Team 2: {t1}.")
         self._start_time = time.monotonic()
         self.phase = "playing"
 
     def reset(self) -> None:
-        self._teams               = [TeamState(0, self._config), TeamState(1, self._config)]
-        self._assignment          = {}
-        self._pending_vibrations  = {}
-        self._connected_devices   = set()
-        self._select_step         = 0
-        self.winner               = None
-        self.phase                = "waiting"
-        self._duration            = 0.0
-        self._start_time          = 0.0
+        self._teams = [TeamState(0, self._config), TeamState(1, self._config)]
+        self._assignment = {}
+        self._pending_vibrations = {}
+        self._connected_devices = set()
+        self._instructor = None
+        self._instructor_gravity = (0.0, 0.0, 1.0)
+        self._instructor_gravity_initialized = False
+        self._reference = None
+        self._reference_history.clear()
+        self._instructor_accum = []
+        self._select_step = 0
+        self.winner = None
+        self.phase = "waiting"
+        self._duration = 0.0
+        self._start_time = 0.0
         self._milestones_hit.clear()
-        self._last10_sent         = False
+        self._last10_sent = False
         print("[GARDEN] Competitive session reset.")
 
     def pop_vibration_commands(self, device_name: str) -> list[int]:
         return self._pending_vibrations.pop(device_name, [])
 
     def get_state(self) -> dict:
-        if self.phase == "team_select":
-            counts = [sum(1 for t in self._assignment.values() if t == i)
-                      for i in range(2)]
-            quota = self._team1_quota
+        if self.phase == "instructor_select":
             return {
-                "mode":             "competitive",
-                "phase":            "team_select",
+                "mode": "competitive",
+                "phase": "instructor_select",
+                "instructor": self._instructor,
+                "instructor_ready": self._instructor is not None,
+                "total_connected": len(self._connected_devices) + (1 if self._instructor else 0),
+                "duration": int(self._duration),
+                "teams": [{"id": 0, "num_devices": 0}, {"id": 1, "num_devices": 0}],
+            }
+
+        if self.phase == "team_select":
+            counts = [sum(1 for t in self._assignment.values() if t == i) for i in range(2)]
+            quota = self._student_capacity
+            return {
+                "mode": "competitive",
+                "phase": "team_select",
+                "instructor": self._instructor,
                 "team_select_step": self._select_step,
-                "total_connected":  len(self._connected_devices),
-                "duration":         int(self._duration),
+                "total_connected": len(self._connected_devices) + (1 if self._instructor else 0),
+                "student_capacity": quota,
+                "duration": int(self._duration),
                 "teams": [
-                    {"id": 0, "num_devices": counts[0],
-                     "quota": quota, "locked": counts[0] >= quota},
-                    {"id": 1, "num_devices": counts[1]},
+                    {"id": 0, "num_devices": counts[0], "quota": quota, "locked": counts[0] >= quota},
+                    {"id": 1, "num_devices": counts[1], "quota": quota, "locked": counts[1] >= quota},
                 ],
             }
+
         return {
-            "mode":           "competitive",
-            "phase":          self.phase,
+            "mode": "competitive",
+            "phase": self.phase,
+            "instructor": self._instructor,
             "time_remaining": round(self.time_remaining, 1),
-            "duration":       int(self._duration),
-            "winner":         self.winner,
-            "teams":          [t.get_state() for t in self._teams],
+            "duration": int(self._duration),
+            "winner": self.winner,
+            "teams": [t.get_state() for t in self._teams],
         }
 
-    # ── Internal ──────────────────────────────────────────────
+    def _handle_instructor_select(self, device_name: str, window: ImuWindow) -> None:
+        motion = selection_motion_score(window)
+        if self._instructor is not None:
+            if device_name == self._instructor:
+                self._reference = window
+            return
+        if motion < self._config.instructor_select_shake_threshold:
+            print(f"[{device_name}] instructor motion={motion:.3f} "
+                  f"(need {self._config.instructor_select_shake_threshold:.3f})")
+            return
+        self._instructor = device_name
+        self._reference = window
+        self._pending_vibrations.setdefault(device_name, []).append(VIBR_MILESTONE2)
+        print(f"[GARDEN] {device_name} selected as instructor (motion={motion:.3f}). "
+              "Press Next to start team selection.")
 
-    def _handle_select(self, device_name: str, window_sum: float) -> None:
+    def confirm_instructor(self) -> None:
+        if self.phase == "instructor_select" and self._instructor is not None:
+            self.phase = "team_select"
+            print("[GARDEN] Instructor confirmed. Team selection started.")
+
+    def _handle_select(self, device_name: str, window: ImuWindow) -> None:
+        motion = selection_motion_score(window)
+        if device_name == self._instructor:
+            self._reference = window
+            return
+
         self._connected_devices.add(device_name)
-
         if device_name in self._assignment:
             return
-        if window_sum < self._config.team_select_shake_threshold:
+        if motion < self._config.team_select_imu_threshold:
+            print(f"[{device_name}] team motion={motion:.3f} "
+                  f"(need {self._config.team_select_imu_threshold:.3f})")
             return
 
-        if self._select_step == 0:
-            team1_count = sum(1 for t in self._assignment.values() if t == 0)
-            if team1_count >= self._team1_quota:
-                print(f"[{device_name}] Team 1 full ({team1_count}/{self._team1_quota})")
-                return
-            team = 0
-        else:
-            team = 1
+        team = self._select_step
+        counts = [sum(1 for t in self._assignment.values() if t == i) for i in range(2)]
+        quota = self._student_capacity
+        if quota > 0 and counts[team] >= quota:
+            print(f"[{device_name}] Team {team + 1} full ({counts[team]}/{quota})")
+            return
 
         self._assignment[device_name] = team
         pattern = VIBR_TEAM1 if team == 0 else VIBR_TEAM2
         self._pending_vibrations.setdefault(device_name, []).append(pattern)
-        counts = [sum(1 for t in self._assignment.values() if t == i) for i in range(2)]
-        print(f"[{device_name}] joined Team {team + 1} — "
-              f"Team 1: {counts[0]}/{self._team1_quota}, Team 2: {counts[1]}")
+        print(f"[{device_name}] joined Team {team + 1}")
 
-    def _handle_playing(self, device_name: str, window_sum: float) -> None:
+    def _handle_playing(self, device_name: str, window: ImuWindow) -> None:
         if self.time_remaining <= 0 and self.phase == "playing":
             self._end_game()
             return
 
-        team_idx    = self._assign_team(device_name)
-        flower_hit  = self._teams[team_idx].process_window(device_name, window_sum)
+        n = self._config.similarity_accumulate_windows
+
+        if device_name == self._instructor:
+            self._reference = window
+            # Gravity EMA updates on every raw window regardless of accumulation
+            self._instructor_gravity = update_gravity_estimate(
+                self._instructor_gravity, (window.ax, window.ay, window.az),
+                self._config.similarity_gravity_ema_alpha, self._instructor_gravity_initialized)
+            self._instructor_gravity_initialized = True
+            self._instructor_accum.append(window)
+            if len(self._instructor_accum) >= n:
+                self._reference_history.append(merge_windows(self._instructor_accum))
+                self._instructor_accum = []
+            return
+
+        team_idx = self._assign_team(device_name)
+
+        if not self._config.similarity_enabled:
+            result = fallback_score(window, self._config.similarity_fallback_activity_scale)
+        else:
+            if not self._reference_history:
+                return
+            # Gravity EMA updates on every raw window regardless of accumulation
+            student_gravity = self._teams[team_idx].update_gravity(
+                device_name, window, self._config.similarity_gravity_ema_alpha)
+            self._teams[team_idx]._student_accum.setdefault(device_name, []).append(window)
+            if len(self._teams[team_idx]._student_accum[device_name]) < n:
+                return
+            merged = merge_windows(self._teams[team_idx]._student_accum[device_name])
+            self._teams[team_idx]._student_accum[device_name] = []
+            result = best_similarity(
+                self._reference_history,
+                merged,
+                min_movement_accel=self._config.similarity_min_movement_accel,
+                instructor_gravity=self._instructor_gravity,
+                student_gravity=student_gravity,
+                direction_penalty_exponent=self._config.similarity_direction_penalty_exponent,
+            )
+        flower_hit = self._teams[team_idx].apply_similarity(device_name, result)
         self._check_milestones()
 
         if flower_hit:
@@ -237,10 +359,11 @@ class CompetitiveFlowerController:
         elif scores[1] > scores[0]:
             self.winner = 1
         else:
-            self.winner = None  # tie
-        print(f"[GARDEN] Time's up! Team 1: {scores[0]:.1f}  Team 2: {scores[1]:.1f}  "
-              f"Winner: {'Tie' if self.winner is None else f'Team {self.winner + 1}'}")
-        # Win vibration for all devices on the winning team (or all on tie)
+            self.winner = None
+        print(
+            f"[GARDEN] Time's up! Team 1: {scores[0]:.1f} Team 2: {scores[1]:.1f} "
+            f"Winner: {'Tie' if self.winner is None else f'Team {self.winner + 1}'}"
+        )
         for dev, team in self._assignment.items():
             if self.winner is None or team == self.winner:
                 self._pending_vibrations.setdefault(dev, []).append(VIBR_WIN)
@@ -254,20 +377,22 @@ class CompetitiveFlowerController:
                 self._milestones_hit.add(threshold)
                 for dev in self._assignment:
                     self._pending_vibrations.setdefault(dev, []).append(pattern_id)
-                print(f"[GARDEN] {int(threshold*100)}% time elapsed — pattern {pattern_id}")
+                if self._instructor:
+                    self._pending_vibrations.setdefault(self._instructor, []).append(pattern_id)
+                print(f"[GARDEN] {int(threshold * 100)}% time elapsed - pattern {pattern_id}")
 
-        # Last 10 seconds warning (fires once, sent to all pods)
         remaining = self._duration - (time.monotonic() - self._start_time)
         if not self._last10_sent and 0 < remaining <= 10.0:
             self._last10_sent = True
             for dev in self._assignment:
                 self._pending_vibrations.setdefault(dev, []).append(VIBR_LAST_10)
-            print("[GARDEN] Last 10 s — anxious vibration!")
+            if self._instructor:
+                self._pending_vibrations.setdefault(self._instructor, []).append(VIBR_LAST_10)
+            print("[GARDEN] Last 10 s - anxious vibration!")
 
     def _assign_team(self, device_name: str) -> int:
         if device_name not in self._assignment:
-            counts = [sum(1 for t in self._assignment.values() if t == i)
-                      for i in range(2)]
+            counts = [sum(1 for t in self._assignment.values() if t == i) for i in range(2)]
             team = 0 if counts[0] <= counts[1] else 1
             if counts[0] == counts[1]:
                 team = random.randint(0, 1)

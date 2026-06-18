@@ -3,36 +3,32 @@
 #include <stdint.h>
 
 /**
- * Windowed magnitude accumulator for the accelerometer.
+ * Windowed IMU feature accumulator.
  *
- * A FreeRTOS task samples the accelerometer at SAMPLE_RATE_HZ.
- * Each sample contributes its vector magnitude sqrt(ax²+ay²+az²) to a
- * running sum. Every WINDOW_DURATION_S seconds the completed sum is pushed
- * into a fixed-size ring buffer for consumption by the main task.
+ * A FreeRTOS task samples the MPU6050 at SAMPLE_RATE_HZ. Every completed
+ * window stores movement direction, gyro direction, and pod angle summaries
+ * for similarity scoring.
  */
 
 #define SAMPLE_RATE_HZ      100
-#define WINDOW_DURATION_S   3
-#define SAMPLES_PER_WINDOW  (SAMPLE_RATE_HZ * WINDOW_DURATION_S)  // 500
+#define SAMPLES_PER_WINDOW  25
+#define WINDOW_DURATION_S   ((float)SAMPLES_PER_WINDOW / SAMPLE_RATE_HZ)
 
-// How many completed windows to keep before the oldest is overwritten.
 #define WINDOW_BUFFER_SIZE  128
 
-/**
- * Create the FreeRTOS sampling task.
- * accel_init() must succeed before calling this.
- */
+struct ImuWindow {
+    uint16_t samples;
+    float ax;
+    float ay;
+    float az;
+    float gx;
+    float gy;
+    float gz;
+    float roll;
+    float pitch;
+    float activity;
+};
+
 void window_task_start();
-
-/**
- * Number of completed windows waiting in the buffer.
- * Thread-safe — may be called from any task.
- */
 uint32_t window_available();
-
-/**
- * Consume and return the oldest completed window sum.
- * @param out  Receives the sum of magnitudes (g) over the window.
- * @return     false if the buffer is empty.
- */
-bool window_pop(float &out);
+bool window_pop(ImuWindow &out);

@@ -1,31 +1,58 @@
 import asyncio
-import struct
+import time
 
 from bleak import BleakClient
 
 from .constants import WINDOW_CHAR_UUID, COMMAND_CHAR_UUID
+from .imu import parse_imu_window
 
 
 class PebbleClient:
     """
     Manages the BLE connection to a single Pebble pod.
 
-    - Forwards window-sum notifications to the game controller via
-      process_window(device_name, window_sum).
+    - Forwards IMU window notifications to the game controller via
+      process_imu_window(device_name, imu_window) when available.
+    - Falls back to process_window(device_name, effort_value) for older games.
     - Polls the controller for pending vibration commands once per second
       and writes them to the pod's command characteristic.
     - Auto-reconnects on disconnect or error.
     """
 
-    def __init__(self, device, controller) -> None:
+    def __init__(self, device, controller, name: str | None = None) -> None:
         self._device     = device
-        self.name        = device.name
+        address = getattr(device, "address", None) or str(device)
+        suffix = str(address)[-8:].replace(":", "")
+        self.name        = name or getattr(device, "name", None) or f"Pebble_{suffix}"
         self._controller = controller
+        self._last_window_seen = 0.0
+
+    _STATUS_MESSAGES = {
+        0x01: "IMU offline — no I2C devices found. Check SDA/SCL/VCC wiring.",
+        0x02: "IMU init failed — device found but init returned false.",
+        0x03: "IMU lost — repeated read failures during operation.",
+    }
 
     def _on_window(self, _sender, data: bytearray) -> None:
+        # Status/error packet from firmware (magic=0xE1, error_code)
+        if data and data[0] == 0xE1:
+            code = data[1] if len(data) > 1 else 0
+            msg = self._STATUS_MESSAGES.get(code, f"unknown firmware status 0x{code:02X}")
+            print(f"[{self.name}] FIRMWARE: {msg}")
+            return
+
         try:
-            (window_sum,) = struct.unpack("<f", bytes(data))
-            self._controller.process_window(self.name, window_sum)
+            imu_window = parse_imu_window(bytes(data))
+            self._last_window_seen = time.monotonic()
+            print(f"[{self.name}] activity={imu_window.shake_score:.3f} "
+                  f"accel(ax={imu_window.ax:.3f}, ay={imu_window.ay:.3f}, az={imu_window.az:.3f}) "
+                  f"gyro(gx={imu_window.gx:.1f}, gy={imu_window.gy:.1f}, gz={imu_window.gz:.1f}) "
+                  f"angle(roll={imu_window.roll:.1f}, pitch={imu_window.pitch:.1f})")
+            fn = getattr(self._controller, "process_imu_window", None)
+            if fn:
+                fn(self.name, imu_window)
+            else:
+                self._controller.process_window(self.name, imu_window.effort_fallback)
         except Exception as exc:
             print(f"[{self.name}] ERROR in window callback: {exc}")
 
@@ -46,13 +73,24 @@ class PebbleClient:
         while True:
             try:
                 async with BleakClient(self._device) as client:
-                    print(f"[{self.name}] connected")
+                    print(f"[{self.name}] connected (mtu={client.mtu_size})")
+                    # Give the BLE stack time to finish MTU/connection-parameter
+                    # negotiation before subscribing. Subscribing immediately
+                    # after connect can race with that negotiation and cause
+                    # the very first notification to arrive truncated to just
+                    # the 3-byte ATT header instead of the 20-byte payload.
+                    await asyncio.sleep(0.5)
                     await client.start_notify(WINDOW_CHAR_UUID, self._on_window)
                     print(f"[{self.name}] subscribed to window notifications")
+                    self._last_window_seen = time.monotonic()
 
                     while client.is_connected:
                         for cmd in self._pop_vibration_commands():
                             await self._send_command(client, cmd)
+                        if time.monotonic() - self._last_window_seen > 5.0:
+                            print(f"[{self.name}] connected, but no IMU windows received for 5 s. "
+                                  "Check MPU6050 wiring/init and pod serial logs.")
+                            self._last_window_seen = time.monotonic()
                         await asyncio.sleep(1.0)
 
                 print(f"[{self.name}] disconnected — retrying in {RETRY_DELAY:.0f}s")

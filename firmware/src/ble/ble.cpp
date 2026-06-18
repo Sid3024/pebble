@@ -3,9 +3,10 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <math.h>
 #include "esp_mac.h"
+#include "window/window.h"
 
-// Must match ble/constants.py exactly.
 #define SERVICE_UUID      "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 #define WINDOW_CHAR_UUID  "a1b2c3d4-e5f6-7890-abcd-ef1234567891"
 #define COMMAND_CHAR_UUID "a1b2c3d4-e5f6-7890-abcd-ef1234567892"
@@ -14,7 +15,25 @@ static BLECharacteristic* s_window_char = nullptr;
 static bool               s_connected   = false;
 static ble_command_cb_t   s_command_cb  = nullptr;
 
-// ── Callbacks ─────────────────────────────────────────────────
+struct PackedImuWindow {
+    uint8_t magic;
+    uint8_t version;
+    uint16_t activity_milli;
+    int16_t ax_mg;
+    int16_t ay_mg;
+    int16_t az_mg;
+    int16_t gx_cdeg;
+    int16_t gy_cdeg;
+    int16_t gz_cdeg;
+    int16_t roll_cdeg;
+    int16_t pitch_cdeg;
+} __attribute__((packed));
+
+static int16_t clamp_i16(float value) {
+    if (value > 32767.0f) return 32767;
+    if (value < -32768.0f) return -32768;
+    return static_cast<int16_t>(lroundf(value));
+}
 
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer*) override {
@@ -23,7 +42,7 @@ class ServerCallbacks : public BLEServerCallbacks {
     }
     void onDisconnect(BLEServer* server) override {
         s_connected = false;
-        Serial.println("[BLE] client disconnected — restarting advertising");
+        Serial.println("[BLE] client disconnected - restarting advertising");
         server->startAdvertising();
     }
 };
@@ -38,8 +57,6 @@ class CommandCallbacks : public BLECharacteristicCallbacks {
         }
     }
 };
-
-// ── Public API ────────────────────────────────────────────────
 
 void ble_set_command_callback(ble_command_cb_t cb) {
     s_command_cb = cb;
@@ -58,12 +75,10 @@ void ble_init() {
 
     BLEService* service = server->createService(SERVICE_UUID);
 
-    // Window notification (MCU → central)
     s_window_char = service->createCharacteristic(
         WINDOW_CHAR_UUID, BLECharacteristic::PROPERTY_NOTIFY);
     s_window_char->addDescriptor(new BLE2902());
 
-    // Command write (central → MCU)
     BLECharacteristic* cmd = service->createCharacteristic(
         COMMAND_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE);
     cmd->setCallbacks(new CommandCallbacks());
@@ -71,6 +86,16 @@ void ble_init() {
     service->start();
 
     BLEAdvertising* adv = BLEDevice::getAdvertising();
+    BLEAdvertisementData adv_data;
+    adv_data.setFlags(0x06);
+    adv_data.setCompleteServices(BLEUUID(SERVICE_UUID));
+    adv_data.setName("Pebble");
+
+    BLEAdvertisementData scan_data;
+    scan_data.setName(name);
+
+    adv->setAdvertisementData(adv_data);
+    adv->setScanResponseData(scan_data);
     adv->addServiceUUID(SERVICE_UUID);
     adv->setScanResponse(true);
     BLEDevice::startAdvertising();
@@ -78,10 +103,32 @@ void ble_init() {
     Serial.printf("[BLE] advertising as %s\n", name);
 }
 
-void ble_send_window(float window_sum) {
+void ble_send_window(const ImuWindow &window) {
     if (!s_connected || !s_window_char) return;
-    s_window_char->setValue(reinterpret_cast<uint8_t*>(&window_sum), sizeof(float));
+    PackedImuWindow packet{
+        0x50,
+        2,
+        static_cast<uint16_t>(max(0, min(65535, static_cast<int>(lroundf(window.activity * 1000.0f))))),
+        clamp_i16(window.ax * 1000.0f),
+        clamp_i16(window.ay * 1000.0f),
+        clamp_i16(window.az * 1000.0f),
+        clamp_i16(window.gx * 100.0f),
+        clamp_i16(window.gy * 100.0f),
+        clamp_i16(window.gz * 100.0f),
+        clamp_i16(window.roll * 100.0f),
+        clamp_i16(window.pitch * 100.0f),
+    };
+    s_window_char->setValue(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
     s_window_char->notify();
 }
 
-bool ble_connected() { return s_connected; }
+void ble_send_status(uint8_t error_code) {
+    if (!s_connected || !s_window_char) return;
+    uint8_t pkt[3] = { 0xE1, error_code, 0 };
+    s_window_char->setValue(pkt, sizeof(pkt));
+    s_window_char->notify();
+}
+
+bool ble_connected() {
+    return s_connected;
+}

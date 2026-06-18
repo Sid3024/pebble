@@ -20,7 +20,7 @@ async def _run_with_ble(server: FlowerWSServer, config: FlowerConfig) -> None:
     from .ble.client import PebbleClient
 
     print(f"[HUB] Scanning for Pebble pods ({config.ble_scan_timeout}s)...")
-    devices = await scan_for_pebbles(timeout=config.ble_scan_timeout)
+    devices = await scan_for_pebbles(timeout=config.ble_scan_timeout, debug=True)
 
     if not devices:
         print("[HUB] No Pebble pods found. Exiting.")

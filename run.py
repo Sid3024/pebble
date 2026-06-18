@@ -25,23 +25,45 @@ class MultiController:
         for ctrl in self._controllers:
             ctrl.process_window(device_name, window_sum)
 
+    def process_imu_window(self, device_name: str, imu_window) -> None:
+        for ctrl in self._controllers:
+            fn = getattr(ctrl, "process_imu_window", None)
+            if fn:
+                fn(device_name, imu_window)
+            else:
+                ctrl.process_window(device_name, imu_window.effort_fallback)
+
 
 # ── BLE helpers ───────────────────────────────────────────────────────────────
 
 async def _connect_ble(controller, scan_timeout: float) -> None:
-    from ble.scanner import scan_for_pebbles
+    from ble.scanner import scan_for_pebbles, load_known_pods
     from ble.client import PebbleClient
 
     known: set[str] = set()   # BLE addresses already spawned
 
     async def scan_and_connect() -> None:
-        devices = await scan_for_pebbles(timeout=scan_timeout)
+        devices = await scan_for_pebbles(timeout=scan_timeout, debug=True)
         new = [d for d in devices if d.address not in known]
         if new:
             print(f"[BLE] Found {len(new)} new pod(s): {[d.name for d in new]}")
-            for d in new:
+            for i, d in enumerate(new):
                 known.add(d.address)
+                if i > 0:
+                    await asyncio.sleep(1.0)
                 asyncio.create_task(PebbleClient(d, controller).run())
+            return
+
+        # Fallback: try cached addresses directly when scan misses
+        for i, pod in enumerate(load_known_pods()):
+            address = pod["address"]
+            if address in known:
+                continue
+            print(f"[BLE] Scan missed pod, trying known address {address} directly...")
+            known.add(address)
+            if i > 0:
+                await asyncio.sleep(1.0)
+            asyncio.create_task(PebbleClient(address, controller, name=pod.get("name")).run())
 
     print(f"[BLE] Scanning for Pebble pods ({scan_timeout}s)…")
     await scan_and_connect()

@@ -68,8 +68,8 @@
     <div id="duration-label">Game Duration</div>
     <div id="duration-buttons">
       <button class="dur-btn" data-secs="30">30 sec</button>
-      <button class="dur-btn" data-secs="60">1 min</button>
-      <button class="dur-btn active" data-secs="120">2 min</button>
+      <button class="dur-btn active" data-secs="60">1 min</button>
+      <button class="dur-btn" data-secs="120">2 min</button>
       <button class="dur-btn" data-secs="300">5 min</button>
     </div>
   </div>
@@ -83,24 +83,30 @@
   <button id="lang-toggle" title="Switch language / 切换语言">中文</button>
 </div>
 
-<!-- ── Team selection overlay (competitive only) ─────────── -->
+<!-- ── Selection overlay (instructor → team 1 → team 2) ──── -->
 <div id="team-select-overlay">
-  <div id="ts-title">Team 1 — Join Up! 🔵</div>
-  <div id="ts-subtitle">Shake your weights to join Team 1!</div>
+  <div id="ts-title">Class Setup</div>
+  <div id="ts-subtitle">Shake your pod to join</div>
 
   <div id="ts-cards">
-    <div class="ts-card" id="ts-card-0">
+    <div class="ts-card ts-waiting" id="ts-card-instructor">
+      <div class="ts-card-name" id="ts-card-name-instructor">Instructor</div>
+      <div class="ts-count" id="ts-count-instructor">0</div>
+      <div class="ts-card-label" id="ts-card-label-instructor">waiting for shake</div>
+    </div>
+    <div class="ts-card ts-waiting" id="ts-card-0">
       <div class="ts-card-name" id="ts-card-name-0">Team 1</div>
       <div class="ts-count" id="ts-count-0">0</div>
-      <div class="ts-card-label" id="ts-card-label-0">shaking in</div>
+      <div class="ts-card-label" id="ts-card-label-0">waiting…</div>
     </div>
-    <div class="ts-card" id="ts-card-1">
+    <div class="ts-card ts-waiting" id="ts-card-1">
       <div class="ts-card-name" id="ts-card-name-1">Team 2</div>
       <div class="ts-count" id="ts-count-1">0</div>
       <div class="ts-card-label" id="ts-card-label-1">waiting…</div>
     </div>
   </div>
 
+  <button id="btn-confirm-instructor">Next</button>
   <button id="btn-next-team">Next: Team 2 →</button>
   <button id="btn-begin-game">Let's Play! 🌸</button>
 </div>

@@ -11,13 +11,16 @@ const STRINGS = {
     noPods:           "No pods connected",
     pods:             (n) => `${n} pod${n !== 1 ? "s" : ""} connected`,
     score:            (s) => `Score: ${s} pts`,
+    scoreSimilarity:  (s, p) => `Score: ${s} pts · Match: ${p}%`,
     teamScore:        (s) => `${s} pts`,
+    teamScoreSimilarity: (s, p) => `${s} pts · ${p}% match`,
     durationLabel:    "Game Duration",
     durMin:           (s) => s < 60 ? `${s} sec` : `${s/60} min`,
     badgeWaiting:     "Ready",
     badgePlaying:     "Growing!",
     badgeWon:         "Time's Up!",
     badgeSelecting:   "Picking Teams",
+    badgeInstructor:  "Pick Instructor",
     waitingTitle:     "🌱 Pebble Garden",
     waitingSub:       "Pick up your pods and get ready to grow!",
     modeSingle:       "Single Team",
@@ -43,19 +46,28 @@ const STRINGS = {
     tsNextTeam:       "Next: Team 2 →",
     tsBeginGame:      "Let's Play! 🌸",
     tsPeople:         (n) => n === 1 ? "1 person" : `${n} people`,
+    instructorTitle:  "Class Setup",
+    instructorSub:    "Instructor, shake your pod to begin.",
+    instructorCard:   "Instructor",
+    instructorWaiting:"waiting for shake",
+    instructorReady:  "leading ✓",
+    instructorNext:   "Next",
   },
   zh: {
     title:            "🌸 卵石花园",
     noPods:           "未连接设备",
     pods:             (n) => `已连接 ${n} 个设备`,
     score:            (s) => `得分：${s} 分`,
+    scoreSimilarity:  (s, p) => `得分：${s} 分 · 匹配：${p}%`,
     teamScore:        (s) => `${s} 分`,
+    teamScoreSimilarity: (s, p) => `${s} 分 · 匹配 ${p}%`,
     durationLabel:    "游戏时长",
     durMin:           (s) => s < 60 ? `${s} 秒` : `${s/60} 分钟`,
     badgeWaiting:     "准备好了",
     badgePlaying:     "生长中！",
     badgeWon:         "时间到！",
     badgeSelecting:   "选择队伍",
+    badgeInstructor:  "选择教练",
     waitingTitle:     "🌱 卵石花园",
     waitingSub:       "拿起您的器材，准备开始！",
     modeSingle:       "单队模式",
@@ -81,6 +93,12 @@ const STRINGS = {
     tsNextTeam:       "下一队：队伍二 →",
     tsBeginGame:      "开始游戏！🌸",
     tsPeople:         (n) => `${n} 人`,
+    instructorTitle:  "课程准备",
+    instructorSub:    "教练，摇动设备开始。",
+    instructorCard:   "教练",
+    instructorWaiting:"等待摇动",
+    instructorReady:  "引领中 ✓",
+    instructorNext:   "下一步",
   },
 };
 
@@ -162,7 +180,7 @@ let lastMode         = null;
 let lastPodCount     = null;
 let lastProgress     = null;
 let selectedMode     = "single";
-let selectedDuration = 120;
+let selectedDuration = 60;
 let lastTSCounts     = [-1, -1];
 let lastStateTeams   = null;   // last competitive teams array (for win overlay)
 let lastStateSingle  = null;   // last single state (for win overlay)
@@ -219,8 +237,11 @@ function applyLang() {
   });
 
   // Team selection overlay strings
+  document.getElementById("btn-confirm-instructor").textContent = t("instructorNext");
   document.getElementById("btn-next-team").textContent  = t("tsNextTeam");
   document.getElementById("btn-begin-game").textContent = t("tsBeginGame");
+  const nameI = document.getElementById("ts-card-name-instructor");
+  if (nameI) nameI.textContent = t("instructorCard");
   [0, 1].forEach(i => {
     const nameEl = document.getElementById(`ts-card-name-${i}`);
     if (nameEl) nameEl.textContent = t("team", i + 1);
@@ -346,14 +367,15 @@ function updateGame(state) {
   lastMode = mode;
 
   // Pod count
-  const totalDevices = mode === "competitive"
-    ? (state.teams || []).reduce((s, tm) => s + (tm.num_devices || 0), 0)
-    : (state.num_devices || 0);
+  const totalDevices = state.total_connected ?? (
+    mode === "competitive"
+      ? (state.teams || []).reduce((s, tm) => s + (tm.num_devices || 0), 0)
+      : (state.num_devices || 0)
+  );
   updatePodCount(totalDevices);
 
-  // Team selection phase — special overlay, skip normal layout
-  if (phase === "team_select") {
-    updateTeamSelect(state);
+  if (phase === "instructor_select" || phase === "team_select") {
+    updateSelectionOverlay(state);
     return;
   }
 
@@ -377,62 +399,101 @@ function updateGame(state) {
   if (mode === "competitive") {
     (state.teams || []).forEach(team => updateTeam(team));
   } else {
-    updateProgress(state.score, state.progress);
+    updateProgress(state.score, state.progress, state.similarity);
     updatePlants(state.plants, SINGLE_GARDEN);
   }
 }
 
-// ── Team selection overlay ────────────────────────────────────
-function updateTeamSelect(state) {
+// ── Combined selection overlay (instructor → team 1 → team 2) ─
+function updateSelectionOverlay(state) {
   const overlay = document.getElementById("team-select-overlay");
   overlay.classList.add("visible");
   document.getElementById("waiting-overlay").classList.add("hidden");
+  document.getElementById("scene").classList.toggle("competitive", state.mode === "competitive");
 
+  const phase = state.phase;
   const step  = state.team_select_step ?? 0;
   const teams = state.teams || [{id:0,num_devices:0},{id:1,num_devices:0}];
   const t0    = teams.find(tm => tm.id === 0) || {num_devices: 0, quota: null, locked: false};
   const t1    = teams.find(tm => tm.id === 1) || {num_devices: 0};
   const counts = [t0.num_devices || 0, t1.num_devices || 0];
 
-  document.getElementById("ts-title").textContent    = t("tsTitle", step + 1);
-  document.getElementById("ts-subtitle").textContent = t("tsSub",   step + 1);
-
+  // Badge
   const badge = document.getElementById("status-badge");
   badge.className = "active";
-  badge.textContent = t("badgeSelecting");
+  badge.textContent = phase === "instructor_select" ? t("badgeInstructor") : t("badgeSelecting");
 
-  document.getElementById("btn-next-team").style.display  = step === 0 ? "" : "none";
-  document.getElementById("btn-begin-game").style.display = step === 1 ? "" : "none";
+  // Title / subtitle
+  if (phase === "instructor_select") {
+    document.getElementById("ts-title").textContent    = t("instructorTitle");
+    document.getElementById("ts-subtitle").textContent = t("instructorSub");
+  } else {
+    document.getElementById("ts-title").textContent    = t("tsTitle", step + 1);
+    document.getElementById("ts-subtitle").textContent = t("tsSub",   step + 1);
+  }
 
-  // Animate count bumps
-  [0, 1].forEach(i => {
-    const countEl  = document.getElementById(`ts-count-${i}`);
-    const newCount = counts[i];
-    if (newCount !== lastTSCounts[i]) {
-      lastTSCounts[i] = newCount;
-      countEl.textContent = newCount;
-      countEl.classList.remove("ts-count-bump");
-      void countEl.offsetWidth;
-      countEl.classList.add("ts-count-bump");
+  // ── Instructor card ───────────────────────────────────────
+  const cardI  = document.getElementById("ts-card-instructor");
+  const labelI = document.getElementById("ts-card-label-instructor");
+  const countI = document.getElementById("ts-count-instructor");
+  document.getElementById("ts-card-name-instructor").textContent = t("instructorCard");
+
+  if (phase === "instructor_select") {
+    if (state.instructor) {
+      // Instructor locked in — waiting for facilitator to press Next
+      cardI.className    = "ts-card ts-full";
+      countI.textContent = "1";
+      labelI.textContent = t("instructorReady");
+    } else {
+      cardI.className    = "ts-card ts-active ts-instructor-active";
+      countI.textContent = "0";
+      labelI.textContent = t("instructorWaiting");
     }
-  });
+  } else {
+    // team_select — instructor is confirmed, lock the card
+    cardI.className    = "ts-card ts-full";
+    countI.textContent = "1";
+    labelI.textContent = t("instructorReady");
+  }
+
+  // Single mode: only the instructor needs to lock in — no teams.
+  const isSingle = state.mode !== "competitive";
+  document.getElementById("ts-cards").classList.toggle("ts-cards-single", isSingle);
+  document.getElementById("ts-card-0").classList.toggle("hidden", isSingle);
+  document.getElementById("ts-card-1").classList.toggle("hidden", isSingle);
+  if (isSingle) {
+    document.getElementById("btn-next-team").style.display  = "none";
+    document.getElementById("btn-begin-game").style.display = "none";
+    return;
+  }
 
   // ── Team 1 card ───────────────────────────────────────────
   const card0  = document.getElementById("ts-card-0");
   const label0 = document.getElementById("ts-card-label-0");
+  document.getElementById("ts-card-name-0").textContent = t("team", 1);
 
-  if (step > 0) {
-    // Phase moved on — Team 1 is done
-    card0.className     = "ts-card ts-locked";
-    label0.textContent  = t("tsLocked");
+  // Animate count bump
+  if (counts[0] !== lastTSCounts[0]) {
+    lastTSCounts[0] = counts[0];
+    const el = document.getElementById("ts-count-0");
+    el.textContent = counts[0];
+    el.classList.remove("ts-count-bump");
+    void el.offsetWidth;
+    el.classList.add("ts-count-bump");
+  }
+
+  if (phase === "instructor_select") {
+    card0.className    = "ts-card ts-waiting";
+    label0.textContent = t("tsWaiting");
+  } else if (step > 0) {
+    card0.className    = "ts-card ts-locked";
+    label0.textContent = t("tsLocked");
   } else if (t0.locked) {
-    // Quota reached — Team 1 full
-    card0.className     = "ts-card ts-full";
-    label0.textContent  = t("tsFull");
+    card0.className    = "ts-card ts-full";
+    label0.textContent = t("tsFull");
   } else {
-    // Actively accepting
-    card0.className     = "ts-card ts-active";
-    label0.textContent  = t0.quota
+    card0.className    = "ts-card ts-active";
+    label0.textContent = t0.quota
       ? `${counts[0]} / ${t0.quota} ${t("tsJoined")}`
       : t("tsShakingIn");
   }
@@ -440,20 +501,44 @@ function updateTeamSelect(state) {
   // ── Team 2 card ───────────────────────────────────────────
   const card1  = document.getElementById("ts-card-1");
   const label1 = document.getElementById("ts-card-label-1");
+  document.getElementById("ts-card-name-1").textContent = t("team", 2);
 
-  if (step === 1) {
-    card1.className    = "ts-card ts-active";
-    label1.textContent = t("tsShakingIn");
-  } else {
+  // Animate count bump
+  if (counts[1] !== lastTSCounts[1]) {
+    lastTSCounts[1] = counts[1];
+    const el = document.getElementById("ts-count-1");
+    el.textContent = counts[1];
+    el.classList.remove("ts-count-bump");
+    void el.offsetWidth;
+    el.classList.add("ts-count-bump");
+  }
+
+  if (phase === "instructor_select" || step === 0) {
     card1.className    = "ts-card ts-waiting";
     label1.textContent = t("tsWaiting");
+  } else {
+    card1.className    = "ts-card ts-active";
+    label1.textContent = t("tsShakingIn");
   }
+
+  // ── Buttons ───────────────────────────────────────────────
+  // "Next" — confirm instructor, only once instructor has shaken in
+  document.getElementById("btn-confirm-instructor").style.display =
+    (phase === "instructor_select" && !!state.instructor) ? "" : "none";
+  // "Next: Team 2" — only during team_select step 0
+  document.getElementById("btn-next-team").style.display =
+    (phase === "team_select" && step === 0) ? "" : "none";
+  // "Let's Play" — only during team_select step 1
+  document.getElementById("btn-begin-game").style.display =
+    (phase === "team_select" && step === 1) ? "" : "none";
 }
 
 // ── Score display (single mode) ──────────────────────────────
-function updateProgress(score, progress) {
+function updateProgress(score, progress, similarity = null) {
   lastProgress = progress;
-  document.getElementById("progress-label").textContent = t("score", score ?? 0);
+  const pct = Math.round((similarity ?? 0) * 100);
+  document.getElementById("progress-label").textContent =
+    similarity === null ? t("score", score ?? 0) : t("scoreSimilarity", score ?? 0, pct);
 }
 
 // ── Countdown timer ───────────────────────────────────────────
@@ -502,7 +587,9 @@ function updatePodCount(n) {
 // ── Competitive team update ───────────────────────────────────
 function updateTeam(team) {
   const i = team.id;
-  document.getElementById(`team-score-label-${i}`).textContent = t("teamScore", team.score ?? 0);
+  const pct = Math.round((team.similarity ?? 0) * 100);
+  document.getElementById(`team-score-label-${i}`).textContent =
+    team.similarity === undefined ? t("teamScore", team.score ?? 0) : t("teamScoreSimilarity", team.score ?? 0, pct);
   updatePlants(team.plants, TEAM_GARDENS[i]);
 }
 
@@ -580,6 +667,9 @@ function attachButtons() {
   );
   document.getElementById("btn-reset").addEventListener("click", () =>
     sendAction("reset")
+  );
+  document.getElementById("btn-confirm-instructor").addEventListener("click", () =>
+    sendAction("confirm_instructor")
   );
   document.getElementById("btn-next-team").addEventListener("click", () =>
     sendAction("next_team")
