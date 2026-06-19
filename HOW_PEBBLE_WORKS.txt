@@ -267,13 +267,26 @@ STEP 13 — Confirm instructor
 PART 5: THE GAME IS PLAYING — THIS IS WHERE THE MAGIC HAPPENS
 ========================================================================
 
-STEP 14 — 3-second warmup (single mode only)
+STEP 14 — 3-second warmup (both single and competitive mode)
 
    For the first 3 seconds after the game starts, student pods DO NOT
    get scored. Their gravity estimates are still stabilising. During
    this warmup, the gravity EMA is updated every window, but no
-   similarity score is computed.
+   similarity score is computed and no windows are accumulated.
+
+   Why? The gravity EMA starts at (0, 0, 1) — assuming the pod is
+   perfectly flat. If the pod is held at an angle, the EMA needs a few
+   seconds to converge to the pod's actual resting orientation. Without
+   this warmup, the gravity subtraction would be wrong, and the system
+   would think the pod is "moving" when it's actually just sitting still
+   at an angle. That would produce false high similarity scores.
+
+   The instructor is NOT affected by the warmup — their windows still
+   accumulate and build the reference history during these 3 seconds,
+   so the reference is ready the moment scoring begins.
+
    [FlowerGame/engine/controller.py → _handle_playing(), warmup check]
+   [FlowerGame/engine/competitive.py → _handle_playing(), warmup check]
 
 STEP 15 — Instructor windows build reference history
 

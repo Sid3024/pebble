@@ -366,6 +366,13 @@ class CompetitiveFlowerController:
                 self._instructor_accum = []
             return
 
+        # 3-second warmup: let gravity EMA stabilise before scoring begins.
+        # Accumulation is intentionally skipped so the first scored window is fresh.
+        if time.monotonic() - self._start_time < 3.0:
+            student_gravity = self._teams[self._assign_team(device_name)].update_gravity(
+                device_name, window, self._config.similarity_gravity_ema_alpha)
+            return
+
         team_idx = self._assign_team(device_name)
 
         if not self._config.similarity_enabled:
