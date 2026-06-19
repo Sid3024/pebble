@@ -1,3 +1,18 @@
+/*
+ * main.cpp — Pebble Pod Firmware Entry Point (XIAO ESP32S3)
+ *
+ * Orchestrates the entire sensor pod: I2C bus recovery, MPU6050 init,
+ * vibration motor, BLE server. Main loop drains IMU windows from the
+ * FreeRTOS sampling task and sends them as 20-byte BLE notifications.
+ *
+ * Data flow:  MPU6050 -> sampling_task (100Hz) -> ring buffer -> loop()
+ *             -> ble_send_window() -> BLE notification -> Python host
+ *
+ * Recovery: i2c_bus_recover() pulses SCL 9 times if SDA is stuck LOW.
+ *           Wire.setTimeOut(50) prevents 1s blocks that kill USB-CDC.
+ *           Retry every 2s if IMU init fails (try_hw_init).
+ */
+
 #include <Arduino.h>
 #include <Wire.h>
 #include "config/board_config.h"

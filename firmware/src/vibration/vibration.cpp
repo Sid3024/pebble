@@ -1,3 +1,19 @@
+/*
+ * vibration.cpp — Vibration Motor Pattern Player
+ *
+ * Each pattern is a FreeRTOS task that drives the motor via LEDC PWM.
+ * vibration_play() cancels any running pattern and launches a new task.
+ *
+ * Pattern design philosophy:
+ *   - Team assignment: distinctive rhythms so players can tell teams apart
+ *     by feel alone (triple-tap = Team 1, long-short = Team 2).
+ *   - Milestones: escalating intensity (2 taps -> 3 -> 4 -> burst).
+ *   - Win: long celebration with rapid burst followed by a sustained hold.
+ *   - Last 10s: anxious rapid pulses to create urgency.
+ *
+ * Uses LEDC channel/pin defined in board_config.h (1kHz, 8-bit resolution).
+ */
+
 #include "vibration.h"
 #include "config/board_config.h"
 #include "freertos/FreeRTOS.h"

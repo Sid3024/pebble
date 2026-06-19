@@ -1,3 +1,49 @@
+"""
+Similarity scoring engine — compares instructor vs student IMU movement.
+
+This is the core algorithm that makes the flower game work: it takes one
+instructor IMU window and one student IMU window, removes gravity from each,
+and produces a 0-to-1 similarity score based on how well the student's
+movement matches the instructor's movement on each axis (ax, ay, az).
+
+Algorithm overview:
+    1. Remove gravity from both windows using per-pod EMA gravity estimates.
+    2. For each axis (x, y, z), check if both pods moved above the minimum
+       threshold. If any axis is too still -> score = 0.
+    3. Count how many axes have the same direction (sign) of movement.
+    4. Compute magnitude ratios (smaller/larger) per axis.
+    5. Combine:
+       - All 3 axes same direction -> score = 0.9 + 0.1 * magnitude_score
+         (generous: direction match alone gets you 90%+)
+       - Any axis opposite -> score = 0.5 * direction_score * magnitude_score
+         (capped below 50%: clearly a mismatch)
+
+Phase compensation (best_similarity):
+    Pods start their 250ms sampling windows independently, so the "same"
+    movement can land in different windows. best_similarity() compares
+    against the last N instructor windows and picks the best match.
+
+Window merging (merge_windows):
+    Multiple 250ms windows can be averaged together before scoring, extending
+    the effective comparison interval (e.g., 2 windows = 500ms).
+
+Key functions:
+    compute_similarity()      : Core per-pair scoring
+    best_similarity()         : Phase-compensated scoring (tries multiple offsets)
+    update_gravity_estimate() : EMA gravity tracker for a single pod
+    merge_windows()           : Average N ImuWindows into one
+    fallback_score()          : Activity-only scoring when similarity is disabled
+
+Dependencies:
+    - ble.imu : ImuWindow dataclass.
+
+How it fits into Pebble:
+    Called from FlowerController._handle_playing() and
+    CompetitiveFlowerController._handle_playing() every time a student
+    window arrives. The returned score drives flower growth via:
+    growth = growth_per_window * (score ^ exponent).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,6 +54,10 @@ from ble.imu import ImuWindow
 
 @dataclass(frozen=True)
 class SimilarityResult:
+    """Result of comparing one instructor window to one student window.
+    score: 0.0 (no match) to 1.0 (perfect match).
+    direction_score: fraction of axes with same direction (0, 0.33, 0.67, 1.0).
+    magnitude_score: average magnitude ratio across axes (0-1)."""
     score: float
     direction_score: float
     magnitude_score: float

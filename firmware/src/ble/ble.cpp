@@ -1,3 +1,17 @@
+/*
+ * ble.cpp — BLE GATT Server Implementation
+ *
+ * Sets up the ESP32 as a BLE peripheral advertising as "Pebble_XXXXXX".
+ * Creates one GATT service with two characteristics:
+ *   - Window characteristic (notify): ble_send_window() packs an ImuWindow
+ *     into a 20-byte struct and notifies the connected central.
+ *   - Command characteristic (write-no-response): incoming bytes are
+ *     dispatched to a callback (used for vibration pattern IDs).
+ *
+ * ServerCallbacks auto-restarts advertising on disconnect so the pod
+ * is always discoverable when not connected.
+ */
+
 #include "ble.h"
 #include <BLEDevice.h>
 #include <BLEServer.h>

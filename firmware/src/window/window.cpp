@@ -1,3 +1,17 @@
+/*
+ * window.cpp — FreeRTOS IMU Sampling Task and Ring Buffer
+ *
+ * Runs a dedicated FreeRTOS task (sampling_task) that reads the IMU at
+ * exactly 100Hz using vTaskDelayUntil for jitter-free timing. Every 25
+ * samples are averaged into one ImuWindow struct (250ms of data) and
+ * pushed into a ring buffer. The main loop (in main.cpp) drains the
+ * buffer and sends each window over BLE.
+ *
+ * Thread safety: only the sampling task writes to head; only the main
+ * loop reads via window_pop(). The ring buffer is lock-free as long as
+ * the consumer keeps up (128 slots = ~32s of headroom).
+ */
+
 #include "window.h"
 #include "accel/accel.h"
 #include <Wire.h>
