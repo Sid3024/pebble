@@ -227,13 +227,13 @@ html, body {
 
 /* ─── Garden container ───────────────────────────────────── */
 
-/* height 47% = only the grass section of the background SVG */
+/* height 50% = flowers can grow anywhere in the bottom half of the screen */
 #garden {
   position: absolute;
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 47%;
+  height: 50%;
   z-index: 5;
   overflow: visible;
 }
@@ -614,7 +614,7 @@ html, body {
 .team-garden {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  height: 47%;
+  height: 50%;
   z-index: 5;
   overflow: visible;
 }

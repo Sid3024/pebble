@@ -57,7 +57,7 @@ from ble.imu import ImuWindow
 from ..config.config import FlowerConfig
 from .controller import DeviceState, _REFERENCE_HISTORY, _TIME_MILESTONES
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, best_similarity, fallback_score, merge_windows, update_gravity_estimate
+from .similarity import SimilarityResult, best_similarity, fallback_score, gravity_from_roll_pitch, merge_windows, update_gravity_estimate
 
 
 class TeamState:
@@ -71,8 +71,9 @@ class TeamState:
 
     def update_gravity(self, device_name: str, window: ImuWindow, alpha: float) -> tuple[float, float, float]:
         state = self._devices.setdefault(device_name, DeviceState())
+        gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
         state.gravity = update_gravity_estimate(
-            state.gravity, (window.ax, window.ay, window.az), alpha, state.gravity_initialized)
+            state.gravity, gravity_dir, alpha, state.gravity_initialized)
         state.gravity_initialized = True
         return state.gravity
 
@@ -316,9 +317,12 @@ class CompetitiveFlowerController:
               "Press Next to start team selection.")
 
     def confirm_instructor(self) -> None:
-        if self.phase == "instructor_select" and self._instructor is not None:
+        if self.phase == "instructor_select":
             self.phase = "team_select"
-            print("[GARDEN] Instructor confirmed. Team selection started.")
+            if self._instructor:
+                print("[GARDEN] Instructor confirmed. Team selection started.")
+            else:
+                print("[GARDEN] No instructor selected — skipping to team selection.")
 
     def _handle_select(self, device_name: str, window: ImuWindow) -> None:
         motion = selection_motion_score(window)
@@ -355,9 +359,9 @@ class CompetitiveFlowerController:
 
         if device_name == self._instructor:
             self._reference = window
-            # Gravity EMA updates on every raw window regardless of accumulation
+            gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
             self._instructor_gravity = update_gravity_estimate(
-                self._instructor_gravity, (window.ax, window.ay, window.az),
+                self._instructor_gravity, gravity_dir,
                 self._config.similarity_gravity_ema_alpha, self._instructor_gravity_initialized)
             self._instructor_gravity_initialized = True
             self._instructor_accum.append(window)

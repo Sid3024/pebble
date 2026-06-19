@@ -339,17 +339,9 @@ Each pod sends an ImuWindow every 250ms. A window contains:
    gx, gy, gz  — rotation speed on 3 axes (degrees per second)
    roll, pitch  — tilt angles (degrees)
 
-The similarity score only uses ax, ay, and az (the acceleration). It does
-NOT use gyroscope or angles. The reason: acceleration directly tells you
-which direction the pod is being pushed/shaken. That's the most reliable
-way to tell if two people are making the same movement.
-
-Think of the 3 axes like this:
-   ax = left/right
-   ay = forward/backward
-   az = up/down
-(The actual orientation depends on how the pod is held, but the principle
-is the same — 3 independent directions of movement.)
+The similarity score uses ax, ay, az (acceleration) for movement, and
+roll, pitch (tilt angles) to figure out which way "down" is for each pod.
+Gyroscope data is not used for similarity.
 
 By the time the similarity function receives the data, 2 raw windows have
 been merged (averaged) into 1, so the effective comparison interval is
@@ -357,147 +349,192 @@ been merged (averaged) into 1, so the effective comparison interval is
 direction the person was actually moving over that half-second.
 
 
-STEP 1: REMOVE GRAVITY
------------------------
+THE ORIENTATION PROBLEM AND HOW WE SOLVE IT
+--------------------------------------------
 
-The accelerometer always reads gravity (~1g pulling downward). If you
-hold the pod perfectly still, it still reads about 1g on one axis. We
-don't want that to count as "movement", so we subtract it.
+The accelerometer measures movement on 3 axes (x, y, z) relative to the
+POD, not relative to the earth. If the instructor holds their pod flat
+and waves up, that shows up on their z-axis. If a student holds theirs
+sideways and waves up, the same physical movement shows up on a different
+axis. Comparing x-to-x and z-to-z would miss the match entirely.
 
-Each pod tracks its own gravity estimate using an Exponential Moving
-Average (EMA). This is a running average that updates very slowly
-(alpha = 0.02, meaning each new reading only changes the average by 2%).
-Over many readings, the average settles to wherever gravity is pulling.
+The fix: instead of comparing raw axes, we split movement into two parts:
+  1. VERTICAL movement (up/down relative to gravity) — direction CAN be
+     compared because both pods agree on which way is "down"
+  2. HORIZONTAL movement (sideways relative to gravity) — direction
+     CANNOT be compared (we don't know which way the pod is facing
+     horizontally — there's no compass), so we only compare intensity
 
-   instructor_movement_x = instructor.ax - instructor_gravity_x
-   instructor_movement_y = instructor.ay - instructor_gravity_y
-   instructor_movement_z = instructor.az - instructor_gravity_z
-
-   student_movement_x = student.ax - student_gravity_x
-   student_movement_y = student.ay - student_gravity_y
-   student_movement_z = student.az - student_gravity_z
-
-After this subtraction, the numbers represent pure movement only. If both
-pods are sitting still, all values are near zero. If someone shakes left,
-the x-axis goes negative. If someone pushes up, the z-axis goes positive.
-
-Why does each pod track its OWN gravity? Because pods can be held at any
-angle. One person might hold theirs flat, another at a tilt. Each pod
-needs to know where "down" is relative to itself.
+Each pod's roll and pitch angles tell us which way gravity is pulling
+on that specific pod. We use this to figure out "down" for each pod
+independently. Then we project the movement onto that direction.
 
 
-STEP 2: CHECK IF THERE'S ENOUGH MOVEMENT TO COMPARE
-----------------------------------------------------
+STEP 1: GRAVITY IS ALREADY REMOVED (by firmware)
+-------------------------------------------------
 
-If the movement on ANY axis is less than 0.005g for EITHER the instructor
-or the student, the score is immediately 0. There's not enough real
-motion happening to make a meaningful comparison. This prevents the system
-from "scoring" when everyone is standing still.
-
-   if any axis has |movement| < 0.005 for either person → score = 0
+The firmware removes gravity from ax, ay, az before sending them. So the
+values that arrive in Python are pure movement only — holding the pod
+still gives values near zero. The firmware does this by tracking a slow
+EMA of raw acceleration (see earlier section) and subtracting it.
 
 
-STEP 3: COMPARE EACH AXIS — DIRECTION AND MAGNITUDE
-----------------------------------------------------
+STEP 2: FIGURE OUT "DOWN" FOR EACH POD
+---------------------------------------
 
-Now we compare the instructor and student on each of the 3 axes
-independently. For each axis, we ask two questions:
+The firmware also sends roll and pitch angles, which ARE still computed
+from raw acceleration (including gravity). These tell us the pod's tilt.
 
-QUESTION 1: "Are they moving in the SAME direction?"
+From roll and pitch, we reconstruct a "gravity direction vector" — a
+unit vector pointing in the direction of gravity in the pod's local
+coordinate frame. This vector tells us which way "down" is for this pod.
 
-   Look at the sign (positive or negative) of both movements:
-   - Instructor moves RIGHT (+0.3g), Student moves RIGHT (+0.1g) → SAME ✓
-   - Instructor moves LEFT (-0.2g), Student moves RIGHT (+0.4g) → OPPOSITE ✗
+   Example: Pod held flat       → gravity direction = (0, 0, 1)  (down is z)
+   Example: Pod held on its side → gravity direction = (1, 0, 0)  (down is x)
+   Example: Pod tilted 45°      → gravity direction = (0.7, 0, 0.7)
 
-   We count how many axes have matching direction: 0, 1, 2, or 3.
-
-   direction_score = (number of matching axes) / 3
-
-   So:  3 match → 1.0,  2 match → 0.67,  1 match → 0.33,  0 match → 0.0
-
-QUESTION 2: "How similar is the intensity?"
-
-   For each axis, compute the magnitude ratio:
-   ratio = (smaller value) / (larger value)
-
-   Examples:
-   - Instructor: 0.3g, Student: 0.3g → ratio = 1.0  (identical intensity)
-   - Instructor: 0.3g, Student: 0.1g → ratio = 0.33 (student much weaker)
-   - Instructor: 0.5g, Student: 0.4g → ratio = 0.8  (pretty close)
-
-   Each ratio is softened by raising it to the power of 1/8 (because the
-   direction_penalty_exponent is 8.0). This makes the ratio more forgiving:
-   - 0.33 → 0.33^(1/8) = 0.87  (boosted from 33% to 87%)
-   - 0.1  → 0.1^(1/8)  = 0.75  (boosted from 10% to 75%)
-
-   This means: we care much MORE about direction than exact intensity.
-   If you're moving the right way, you get most of the credit even if
-   you shake harder or softer than the instructor.
-
-   magnitude_score = average of the 3 softened ratios
+This gravity direction is smoothed with an EMA (just like the acceleration
+gravity EMA) so it doesn't jump around during shaking.
+[FlowerGame/engine/similarity.py → gravity_from_roll_pitch()]
 
 
-STEP 4: COMBINE INTO A FINAL SCORE
+STEP 3: DECOMPOSE MOVEMENT INTO VERTICAL AND HORIZONTAL
+--------------------------------------------------------
+
+Using the gravity direction vector, we split each pod's movement:
+
+   vertical = how much of the movement is along gravity (up/down)
+     → This is a signed number: positive = moving down, negative = up
+     → Calculated by projecting the movement vector onto gravity direction
+
+   horizontal = how much of the movement is perpendicular to gravity
+     → This is a magnitude only (no direction info)
+     → Calculated as: sqrt(total² - vertical²)
+
+   Example: Pod held flat, shaken upward at 0.5g:
+     movement = (0, 0, -0.5)     gravity direction = (0, 0, 1)
+     vertical = dot product = -0.5   (negative = upward, correct!)
+     horizontal = sqrt(0.25 - 0.25) = 0.0
+
+   Example: Pod held flat, shaken to the right at 0.3g:
+     movement = (0.3, 0, 0)      gravity direction = (0, 0, 1)
+     vertical = dot product = 0.0
+     horizontal = sqrt(0.09 - 0) = 0.3
+
+   Example: Pod tilted 45°, shaken upward at 0.5g:
+     movement = (0, 0, -0.5)     gravity direction = (0.7, 0, 0.7)
+     vertical = 0×0.7 + 0×0 + (-0.5)×0.7 = -0.35  (upward component)
+     horizontal = sqrt(0.25 - 0.12) = 0.36
+
+
+STEP 4: CHECK IF THERE'S ENOUGH MOVEMENT
+-----------------------------------------
+
+If the total movement magnitude for EITHER pod is below 0.005g, the
+score is immediately 0. Not enough motion to compare.
+
+
+STEP 5: COMPARE VERTICAL DIRECTION
 -----------------------------------
 
-This is where the big decision happens. The scoring splits into two
-completely different paths depending on whether ALL axes matched direction:
+This is the only direction check we can do (because horizontal direction
+is unknown without a compass).
 
-PATH A — ALL 3 AXES MATCH DIRECTION (you're moving the right way):
+   Both vertical values positive (both moving down) → SAME ✓
+   Both vertical values negative (both moving up)   → SAME ✓
+   One positive, one negative (one up, one down)    → OPPOSITE ✗
 
-   score = 0.9 + 0.1 × magnitude_score
+We also check if the vertical movement is "significant" (above half the
+minimum threshold for BOTH pods). If both pods have negligible vertical
+movement (they're moving mostly sideways), the direction check is skipped
+— there's no vertical direction to be wrong about.
 
-   This means:
-   - You automatically get at least 90% just for matching direction on
-     every axis. The system is generous here — if you're moving the same
-     way as the instructor, that's already a great match.
-   - The remaining 10% depends on how close your intensity is. Perfect
-     intensity match → 100%. Somewhat off → 91-99%.
 
-   Example: Instructor pushes up-right, student pushes up-right but softer.
-   Direction: all 3 match ✓
-   Magnitude score: 0.7 (student is 70% as intense after softening)
-   Final: 0.9 + 0.1 × 0.7 = 0.97 → 97% match!
+STEP 6: COMPARE MAGNITUDES
+---------------------------
 
-PATH B — ANY AXIS IS OPPOSITE (at least one direction is wrong):
+For both vertical and horizontal, compute magnitude ratios:
 
-   score = 0.5 × direction_score × magnitude_score
+   vertical ratio = min(|instructor_vert|, |student_vert|)
+                  / max(|instructor_vert|, |student_vert|)
 
-   This means:
-   - The score is ALWAYS below 50%. Moving the wrong way on even one
-     axis is treated as a clear mismatch.
-   - The more axes that disagree, the lower the score drops.
-   - Magnitude still matters, but it's multiplied by the direction
-     penalty, so even perfect intensity can't save a wrong direction.
+   horizontal ratio = min(instructor_horiz, student_horiz)
+                    / max(instructor_horiz, student_horiz)
 
-   Example: Instructor pushes up, student pushes down.
-   Direction: 1 out of 3 match → direction_score = 0.33
-   Magnitude score: 0.9
-   Final: 0.5 × 0.33 × 0.9 = 0.15 → 15% match.
+Both are softened by raising to the power of 1/8, same as before:
+   0.33 → 0.87, 0.1 → 0.75  (makes intensity comparison forgiving)
 
-   Example: All 3 axes opposite (exactly wrong movement):
-   Direction: 0 match → direction_score = 0.0
-   Final: 0.5 × 0.0 × anything = 0.0 → 0% match.
+Then they're combined with a WEIGHTED average:
+   magnitude_score = vert_weight × vert_ratio + (1-vert_weight) × horiz_ratio
+
+Where vert_weight = fraction of total movement that is vertical.
+If someone is mostly moving up/down, the vertical ratio dominates.
+If mostly moving sideways, the horizontal ratio dominates.
+
+
+STEP 7: COMBINE INTO A FINAL SCORE
+-----------------------------------
+
+PATH A — VERTICAL MATCHES (or not enough vertical to judge):
+
+   score = 0.9 + 0.1 × magnitude_score     (90-100%)
+
+   If you're moving the same vertical direction (or both moving sideways),
+   you get at least 90%. Magnitude determines how close to 100%.
+
+   Example: Both push up with similar force.
+   Vertical: both negative (up) → SAME ✓
+   Magnitude score: 0.85
+   Final: 0.9 + 0.1 × 0.85 = 0.985 → 98.5%!
+
+PATH B — VERTICAL IS CLEARLY OPPOSITE:
+
+   score = 0.25 × (1 - vert_weight)² × magnitude_score     (0-25%)
+
+   Capped below 25% — much harsher than the matching path. The penalty
+   uses vert_weight SQUARED so even moderate vertical opposition gets
+   punished heavily:
+
+   Example: Instructor pushes up, student pushes down (purely vertical).
+   vert_weight = 1.0
+   Final: 0.25 × (1-1.0)² × 0.9 = 0.0 → 0% match.
+
+   Example: Movement is 50% vertical, 50% horizontal, but vertical
+   is opposite.
+   vert_weight = 0.5, magnitude_score = 0.9
+   Final: 0.25 × (0.5)² × 0.9 = 0.056 → 5.6% match. Very harsh.
+
+   Example: Mostly horizontal movement, tiny opposite vertical blip.
+   vert_weight = 0.1, magnitude_score = 0.8
+   Final: 0.25 × (0.9)² × 0.8 = 0.162 → 16% match. Still punished.
+
+   The squared term means the penalty drops off steeply: you need
+   almost entirely horizontal movement (vert_weight near 0) before
+   the penalty becomes mild. Any meaningful vertical opposition
+   tanks the score.
 
 
 WHY IS THE ALGORITHM DESIGNED THIS WAY?
 ---------------------------------------
 
-The key insight: DIRECTION matters far more than INTENSITY.
+The key insight: we can only reliably compare VERTICAL direction (up vs
+down) because gravity gives us a shared reference for "down". Horizontal
+direction (left vs right, forward vs back) requires knowing which way
+the pod is facing, and without a compass (magnetometer), we can't know.
 
-If the instructor waves left and you wave left — even gently — you're
-doing the right movement. That should score high. But if the instructor
-waves left and you wave right — even at the exact same speed — you're
-doing the wrong thing. That should score low.
+So the algorithm is generous with horizontal movement (assumes it matches
+since we can't check) and strict with vertical movement (the one thing
+we CAN check).
 
-The 90%/50% split enforces this:
-- Right direction → floor of 90% (generous)
-- Wrong direction → ceiling of 50% (harsh)
+This means:
+- Up/down exercises (jumping, waving arms up) → reliable scoring ✓
+- Sideways exercises (waving left/right) → scored on intensity only,
+  direction assumed to match. Usually correct since everyone does the
+  same exercise. Can't detect someone going left while others go right.
+- Mixed exercises → vertical component is checked for direction,
+  horizontal component checked for intensity only.
 
-This creates a clear gap. Players can FEEL the difference: matching
-movements grow flowers quickly (90%+ → lots of growth), while wrong
-movements barely grow anything (below 50% → almost no growth after the
-exponent is applied in Step 17).
+The 90%/50% split still creates a clear gap that players can feel.
 
 
 PHASE COMPENSATION — WHY WE CHECK 2 INSTRUCTOR WINDOWS

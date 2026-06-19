@@ -199,9 +199,9 @@ const φ = 0.618033988749895;
 // X: 8–92% — covers the full usable width of each garden panel
 function flowerX(id) { return ((id * φ) % 1) * 84 + 8; }
 
-// Y: 1–44% from the bottom of the garden container — spreads across the full height
+// Y: 1–96% from the bottom of the garden container — fills the entire bottom 50% of the screen
 // Uses a complementary golden-ratio multiplier so X and Y are uncorrelated
-function flowerY(id) { return ((id * 0.381966 * 2.3) % 1) * 43 + 1; }
+function flowerY(id) { return ((id * 0.381966 * 2.3) % 1) * 95 + 1; }
 
 
 // ── Background tree configuration ────────────────────────────
@@ -568,9 +568,9 @@ function updateSelectionOverlay(state) {
   }
 
   // ── Buttons ───────────────────────────────────────────────
-  // "Next" — confirm instructor, only once instructor has shaken in
+  // "Next" — confirm instructor (shown even without an instructor to allow skipping)
   document.getElementById("btn-confirm-instructor").style.display =
-    (phase === "instructor_select" && !!state.instructor) ? "" : "none";
+    (phase === "instructor_select") ? "" : "none";
   // "Next: Team 2" — only during team_select step 0
   document.getElementById("btn-next-team").style.display =
     (phase === "team_select" && step === 0) ? "" : "none";

@@ -54,7 +54,7 @@ from ble.imu import ImuWindow
 
 from ..config.config import FlowerConfig
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, best_similarity, fallback_score, merge_windows, update_gravity_estimate
+from .similarity import SimilarityResult, best_similarity, fallback_score, gravity_from_roll_pitch, merge_windows, update_gravity_estimate
 
 # Each pod's sampling window starts independently when it connects, so the
 # instructor's and student's windows aren't phase-aligned. Keep this many of
@@ -240,9 +240,12 @@ class FlowerController:
             state = self._devices[device_name]
             state.phase = "instructor"
             state.ready = True
-            # Gravity EMA updates on every raw window regardless of accumulation
+            # Track gravity DIRECTION from roll/pitch (not from ax/ay/az, which
+            # are already gravity-removed by firmware). This tells us which way
+            # "down" is for this pod, used for vertical/horizontal decomposition.
+            gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
             state.gravity = update_gravity_estimate(
-                state.gravity, (window.ax, window.ay, window.az),
+                state.gravity, gravity_dir,
                 self._config.similarity_gravity_ema_alpha, state.gravity_initialized)
             state.gravity_initialized = True
             self._reference = window
@@ -256,8 +259,9 @@ class FlowerController:
         # Accumulation is intentionally skipped so the first scored window is fresh.
         if time.monotonic() - self._start_time < 3.0:
             student_state = self._devices[device_name]
+            gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
             student_state.gravity = update_gravity_estimate(
-                student_state.gravity, (window.ax, window.ay, window.az),
+                student_state.gravity, gravity_dir,
                 self._config.similarity_gravity_ema_alpha, student_state.gravity_initialized)
             student_state.gravity_initialized = True
             return
@@ -272,9 +276,9 @@ class FlowerController:
             return
 
         student_state = self._devices[device_name]
-        # Gravity EMA updates on every raw window regardless of accumulation
+        gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
         student_state.gravity = update_gravity_estimate(
-            student_state.gravity, (window.ax, window.ay, window.az),
+            student_state.gravity, gravity_dir,
             self._config.similarity_gravity_ema_alpha, student_state.gravity_initialized)
         student_state.gravity_initialized = True
 
