@@ -6,7 +6,7 @@ Pebble is a soft weighted smart movement system designed for older adults in Act
 
 ## How It Works
 
-During a session, the instructor and each participant hold sensor-equipped pods. The instructor leads simple movements (raise arms, wave side to side, gentle lifts). Each pod measures acceleration 100 times per second, removes the effect of gravity, and wirelessly sends a movement summary to a laptop every 250 ms. The laptop compares each participant's movement to the instructor's, checking whether they moved in the same direction with similar intensity, and converts the match quality into flower growth on a shared display. Better matching grows flowers faster. Gentle vibrations in the pods mark milestones and time warnings to return feedback on participant's efforts and progress.
+During a session, the instructor and each participant hold sensor-equipped pods. The instructor leads simple movements (raise arms, wave side to side, gentle lifts). Each pod measures acceleration 100 times per second, removes the effect of gravity, and wirelessly sends a movement summary to a laptop every 250 ms. The laptop compares each participant's movement to the instructor's, checking whether they moved in the same direction with similar intensity, and converts the match quality into flower growth on a shared display. Better matching grows flowers faster. Gentle vibrations in the pods mark milestones and time warnings to return feedback on participant's efforts and progress. Additionally, a volume game mode maps movement intensity directly to the computer's music volume, allowing the group's effort to control how loud the music plays.
 
 ```
 Pod (IMU sensor, 100 Hz) → BLE wireless → Laptop (comparison engine)
@@ -45,6 +45,7 @@ An optional LED strip controller (second XIAO ESP32S3 + WS2812B strip) can displ
 - **Two session modes** — Single group (everyone contributes to one shared garden) and competitive (two teams race to grow more flowers before time runs out).
 - **Haptic encouragement** — Eight vibration patterns provide feedback without requiring participants to look at a screen: team assignment, progress milestones, last-10-second warning, and celebration.
 - **Shared visual display** — A projected flower garden grows in real time as participants move. Bilingual support (English/Chinese). Designed to be watched by the whole group, not individual screens.
+- **Volume game mode** — Pod movement intensity directly controls the system's (computer) music volume. Faster and harder movements = louder music. Useful for simple rhythm-based exercises.
 - **Adjustable without technical knowledge** — Session duration, scoring sensitivity, growth speed, and display options are all in one config file. No firmware changes needed to tune the experience for different groups.
 
 ## Project Structure
@@ -118,16 +119,30 @@ Each pod appears wirelessly as `Pebble_XXXXXX` once flashed.
 
 ### 3. Start the session backend
 
+To run the flower garden game (instructor-matching with projected display):
+
 ```bash
-python -m FlowerGame
+python run.py flower
 ```
 
-The backend starts on `ws://localhost:8765` and discovers nearby pods automatically.
+To run the volume game (pod movement controls the computer's music volume):
+
+```bash
+python run.py volume
+```
+
+To run both games simultaneously (flowers grow on screen while music volume responds to movement):
+
+```bash
+python run.py both
+```
+
+The backend discovers nearby pods automatically and re-scans every 15 seconds to pick up late joiners.
 
 To test without physical pods:
 
 ```bash
-python -m FlowerGame --simulate --sim-pods 3
+python run.py flower --simulate --sim-pods 3
 ```
 
 ### 4. Open the display
