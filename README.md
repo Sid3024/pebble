@@ -4,15 +4,6 @@
 
 Pebble is a soft weighted smart movement system designed for older adults in Active Ageing Centres and community exercise programmes. Seniors hold two soft weighted pods and follow an instructor through simple guided movements. The system compares their motion to the instructor's in real time and translates participation into shared visual feedback (flowers growing on a projected screen) making strength-building movement feel social, familiar, and non-intimidating.
 
-### Session Setup
-![Session setup screen](assets/screenshot-waiting.png)
-
-### Single Group Mode — Flowers grow as participants match the instructor
-![Single group mode gameplay](assets/screenshot-single.png)
-
-### Competitive Mode — Two teams race to grow more flowers
-![Competitive mode gameplay](assets/screenshot-competitive.png)
-
 ## How It Works
 
 During a session, the instructor and each participant hold sensor-equipped pods. The instructor leads simple movements (raise arms, wave side to side, gentle lifts). Each pod measures acceleration 100 times per second, removes the effect of gravity, and wirelessly sends a movement summary to a laptop every 250 ms. The laptop compares each participant's movement to the instructor's, checking whether they moved in the same direction with similar intensity, and converts the match quality into flower growth on a shared display. Better matching grows flowers faster. Gentle vibrations in the pods mark milestones and time warnings to return feedback on participant's efforts and progress.
