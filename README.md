@@ -141,11 +141,11 @@ Open `GameDashboard/index.html` in Chrome on the same laptop. It connects to the
 3. The instructor shakes their pod to register as the leader.
 4. Press **Next** to confirm.
 5. (Competitive only) Participants shake pods to join teams, then press **Let's Play**.
-6. Follow the instructor's movements — flowers grow as participants match.
+6. Follow the instructor's movements, flowers grow as participants match.
 
 ## Configuration
 
-Session parameters are in [`FlowerGame/config/config.py`](FlowerGame/config/config.py). Facilitators can adjust these between sessions — no firmware changes needed.
+Session parameters are in [`FlowerGame/config/config.py`](FlowerGame/config/config.py). Facilitators can adjust these between sessions without any firmware changes needed.
 
 | Parameter | Default | What it controls |
 |---|---|---|
@@ -160,7 +160,7 @@ Session parameters are in [`FlowerGame/config/config.py`](FlowerGame/config/conf
 
 ## Documentation
 
-For a complete walkthrough of the system — from sensor readings through scoring to flower rendering — see [`HOW_PEBBLE_WORKS.txt`](HOW_PEBBLE_WORKS.txt).
+For a complete walkthrough of the system, from sensor readings through scoring to flower rendering, see [`HOW_PEBBLE_WORKS.txt`](HOW_PEBBLE_WORKS.txt).
 
 ## License
 

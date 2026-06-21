@@ -65,11 +65,11 @@ STEP 2 — BLE advertising starts  [firmware/src/ble/ble.cpp]
    Energy (BLE) device. It:
 
    - Reads the chip's unique MAC address and creates a name like
-     "Pebble_38A221" (last 3 bytes of the MAC in hex).
+     "Pebble_XXXXXX" (last 3 bytes of the MAC in hex).
    - Creates a "GATT service" with two "characteristics":
      * WINDOW characteristic (notify): the pod SENDS data through this.
      * COMMAND characteristic (write): the pod RECEIVES commands through this.
-   - Starts advertising: the pod broadcasts "Hey, I'm Pebble_38A221!"
+   - Starts advertising: the pod broadcasts "Hey, I'm Pebble_XXXXXX!"
      over the air so nearby devices can find it.
 
    At this point, the pod is alive, sampling the IMU, and advertising
@@ -149,7 +149,7 @@ STEP 6 — BLE scanning  [ble/scanner.py]
    "Pebble_" or whose advertised service UUID matches Pebble's UUID.
 
    If it finds 2 pods, you'll see:
-     [HUB] Found 2: ['Pebble_38A221', 'Pebble_75B78D']
+     [HUB] Found 2: ['Pebble_XXXXXX', 'Pebble_YYYYYY']
 
 STEP 7 — One PebbleClient per pod  [ble/client.py]
 
