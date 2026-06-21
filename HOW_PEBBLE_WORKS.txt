@@ -130,7 +130,7 @@ STEP 4 — The main loop sends windows over BLE  [firmware/src/main.cpp]
 PART 2: THE PYTHON HOST STARTS UP (Computer Side)
 ========================================================================
 
-On your laptop, you run: python -m FlowerGame
+On your laptop, you run: python run.py flower
 This starts the game backend.
 
 STEP 5 — main.py boots  [FlowerGame/main.py]
@@ -489,29 +489,23 @@ PATH A — VERTICAL MATCHES (or not enough vertical to judge):
 
 PATH B — VERTICAL IS CLEARLY OPPOSITE:
 
-   score = 0.25 × (1 - vert_weight)² × magnitude_score     (0-25%)
+   score = 0.5 × (1 - vert_weight) × magnitude_score     (0-50%)
 
-   Capped below 25% — much harsher than the matching path. The penalty
-   uses vert_weight SQUARED so even moderate vertical opposition gets
-   punished heavily:
+   Capped below 50%. The penalty is proportional to how much of the
+   movement was vertical:
 
    Example: Instructor pushes up, student pushes down (purely vertical).
-   vert_weight = 1.0
-   Final: 0.25 × (1-1.0)² × 0.9 = 0.0 → 0% match.
+   vert_weight = 1.0, magnitude_score = 0.9
+   Final: 0.5 × (1-1.0) × 0.9 = 0.0 → 0% match.
 
    Example: Movement is 50% vertical, 50% horizontal, but vertical
    is opposite.
    vert_weight = 0.5, magnitude_score = 0.9
-   Final: 0.25 × (0.5)² × 0.9 = 0.056 → 5.6% match. Very harsh.
+   Final: 0.5 × 0.5 × 0.9 = 0.225 → 22.5% match.
 
    Example: Mostly horizontal movement, tiny opposite vertical blip.
    vert_weight = 0.1, magnitude_score = 0.8
-   Final: 0.25 × (0.9)² × 0.8 = 0.162 → 16% match. Still punished.
-
-   The squared term means the penalty drops off steeply: you need
-   almost entirely horizontal movement (vert_weight near 0) before
-   the penalty becomes mild. Any meaningful vertical opposition
-   tanks the score.
+   Final: 0.5 × 0.9 × 0.8 = 0.36 → 36% match. Mild penalty.
 
 
 WHY IS THE ALGORITHM DESIGNED THIS WAY?
@@ -741,7 +735,8 @@ SUMMARY: THE COMPLETE DATA FLOW IN ONE SENTENCE
 
 MPU6050 sensor (100 Hz) → firmware averages 25 samples into a window
 (250ms) → packs into 20 bytes → sends over BLE → Python unpacks →
-game engine removes gravity, compares student vs instructor axis by axis
-→ similarity score (0-1) → growth = score² × 3 points → flowers appear
-on the web dashboard → milestones trigger vibration commands sent back
-over BLE → firmware plays vibration pattern on the motor.
+game engine decomposes movement into vertical/horizontal using gravity
+direction → compares student vs instructor → similarity score (0-1)
+→ growth = score² × 3 points → flowers appear on the web dashboard
+→ milestones trigger vibration commands sent back over BLE → firmware
+plays vibration pattern on the motor.
