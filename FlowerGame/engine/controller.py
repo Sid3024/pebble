@@ -222,10 +222,13 @@ class FlowerController:
               "Press Next to start the game.")
 
     def confirm_instructor(self) -> None:
-        if self.phase == "instructor_select" and self._instructor is not None:
+        if self.phase == "instructor_select":
             self._start_time = time.monotonic()
             self.phase = "playing"
-            print("[GARDEN] Instructor confirmed. Game started.")
+            if self._instructor:
+                print("[GARDEN] Instructor confirmed. Game started.")
+            else:
+                print("[GARDEN] No instructor selected — game started without instructor.")
 
     def _handle_playing(self, device_name: str, window: ImuWindow) -> None:
         if self.time_remaining <= 0:

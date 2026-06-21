@@ -226,6 +226,7 @@ let selectedDuration = 60;
 let lastTSCounts     = [-1, -1];
 let lastStateTeams   = null;   // last competitive teams array (for win overlay)
 let lastStateSingle  = null;   // last single state (for win overlay)
+let lastInstructor   = null;   // last known instructor device name (null = none)
 let buttonPoints     = false;  // whether keyboard button-points are enabled
 
 // Garden objects — el: DOM container, els: sparse array of plant elements, scale: size factor
@@ -407,8 +408,9 @@ function updateGame(state) {
   const phase  = state.phase || "waiting";
   const winner = state.winner ?? null;
 
-  lastMode     = mode;
-  buttonPoints = !!state.button_points;
+  lastMode       = mode;
+  lastInstructor = state.instructor || null;
+  buttonPoints   = !!state.button_points;
 
   // Pod count
   const totalDevices = state.total_connected ?? (
@@ -494,10 +496,16 @@ function updateSelectionOverlay(state) {
       labelI.textContent = t("instructorWaiting");
     }
   } else {
-    // team_select — instructor is confirmed, lock the card
-    cardI.className    = "ts-card ts-full";
-    countI.textContent = "1";
-    labelI.textContent = t("instructorReady");
+    // team_select — instructor is confirmed (or skipped)
+    if (state.instructor) {
+      cardI.className    = "ts-card ts-full";
+      countI.textContent = "1";
+      labelI.textContent = t("instructorReady");
+    } else {
+      cardI.className    = "ts-card ts-flash-red";
+      countI.textContent = "0";
+      labelI.textContent = "no instructor";
+    }
   }
 
   // Single mode: only the instructor needs to lock in — no teams.
@@ -509,7 +517,7 @@ function updateSelectionOverlay(state) {
     document.getElementById("btn-next-team").style.display  = "none";
     document.getElementById("btn-begin-game").style.display = "none";
     document.getElementById("btn-confirm-instructor").style.display =
-      (phase === "instructor_select" && !!state.instructor) ? "" : "none";
+      (phase === "instructor_select") ? "" : "none";
     return;
   }
 
@@ -648,6 +656,19 @@ function updateBadge(phase) {
     case "playing": badge.textContent = t("badgePlaying"); badge.classList.add("active");  break;
     case "won":     badge.textContent = t("badgeWon");     badge.classList.add("won");     break;
   }
+  const notice = document.getElementById("no-instructor-notice");
+  if (phase === "playing" && !lastInstructor) {
+    notice.classList.remove("hidden");
+  } else {
+    notice.classList.add("hidden");
+  }
+
+  const restart = document.getElementById("btn-restart");
+  if (phase === "playing") {
+    restart.classList.remove("hidden");
+  } else {
+    restart.classList.add("hidden");
+  }
 }
 
 // ── Phase / overlays ─────────────────────────────────────────
@@ -711,12 +732,21 @@ function attachButtons() {
   document.getElementById("btn-start").addEventListener("click", () =>
     sendAction("start", { mode: selectedMode, duration: selectedDuration })
   );
+  document.getElementById("btn-restart").addEventListener("click", () =>
+    sendAction("reset")
+  );
   document.getElementById("btn-reset").addEventListener("click", () =>
     sendAction("reset")
   );
-  document.getElementById("btn-confirm-instructor").addEventListener("click", () =>
-    sendAction("confirm_instructor")
-  );
+  document.getElementById("btn-confirm-instructor").addEventListener("click", () => {
+    if (!lastInstructor) {
+      const card = document.getElementById("ts-card-instructor");
+      card.classList.remove("ts-flash-red");
+      void card.offsetWidth;
+      card.classList.add("ts-flash-red");
+    }
+    sendAction("confirm_instructor");
+  });
   document.getElementById("btn-next-team").addEventListener("click", () =>
     sendAction("next_team")
   );

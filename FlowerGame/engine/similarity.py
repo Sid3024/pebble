@@ -194,7 +194,14 @@ def compute_similarity(
     # Total movement — if either pod is too still, can't compare
     i_mag = _vec_mag(i_move)
     s_mag = _vec_mag(s_move)
+
+    # DEBUG: print every comparison so we can see what values flow through
+    print(f"[SIMILARITY DEBUG] instructor=({instructor.ax:.4f},{instructor.ay:.4f},{instructor.az:.4f}) mag={i_mag:.4f} "
+          f"student=({student.ax:.4f},{student.ay:.4f},{student.az:.4f}) mag={s_mag:.4f} "
+          f"gravity_i={instructor_gravity} gravity_s={student_gravity}")
+
     if i_mag < min_movement_accel or s_mag < min_movement_accel:
+        print(f"[SIMILARITY DEBUG] REJECTED: below threshold {min_movement_accel}")
         return SimilarityResult(score=0.0, direction_score=0.0, magnitude_score=0.0)
 
     # "Down" direction for each pod (from roll/pitch-derived gravity EMA)
@@ -251,14 +258,12 @@ def compute_similarity(
         direction_score = 1.0
         score = 0.9 + 0.1 * magnitude_score
     else:
-        # Vertical directions are clearly opposite — harsh penalty.
-        # Capped at 25% (not 50%). The penalty uses vert_weight² so
-        # even moderate vertical opposition is punished heavily:
-        #   purely vertical opposite → 0%
-        #   50% vertical opposite   → ~6%
-        #   mostly horizontal       → ~16-20%
-        direction_score = (1.0 - vert_weight) ** 2
-        score = 0.25 * direction_score * magnitude_score
+        # Vertical directions are clearly opposite — penalty scaled by
+        # how much of the movement was vertical. Purely horizontal
+        # movement with a tiny wrong-direction vertical blip gets a
+        # mild penalty; purely vertical opposite movement is harsh.
+        direction_score = 1.0 - vert_weight
+        score = 0.5 * direction_score * magnitude_score
 
     return SimilarityResult(
         score=max(0.0, min(1.0, score)),

@@ -137,6 +137,46 @@ html, body {
   border: 2px solid rgba(60,120,20,0.3);
 }
 
+#btn-restart {
+  font-family: 'Nunito', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #fff;
+  background: #cc3333;
+  padding: 4px 12px;
+  border: 2px solid #992222;
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.15);
+  z-index: 20;
+}
+#btn-restart:hover { background: #ee4444; }
+#btn-restart.hidden { display: none; }
+
+#no-instructor-notice {
+  font-family: 'Nunito', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 900;
+  color: #ff2200;
+  background: rgba(255,0,0,0.1);
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 2px solid #ff2200;
+  letter-spacing: 0.05em;
+}
+#no-instructor-notice.hidden { display: none; }
+
+/* Red state for instructor card when no instructor selected */
+.ts-flash-red {
+  background: rgba(255, 34, 0, 0.15) !important;
+  border-color: #ff2200 !important;
+  animation: flash-red-pulse 1s ease-in-out infinite;
+}
+@keyframes flash-red-pulse {
+  0%, 100% { border-color: #ff2200; }
+  50%      { border-color: #ff8866; }
+}
+
 /* ─── Timer — fixed center top ───────────────────────────── */
 
 #timer-display {
