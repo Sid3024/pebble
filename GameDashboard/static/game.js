@@ -1,5 +1,47 @@
 /* =============================================================
    Pebble Garden — Game Dashboard Logic
+   =============================================================
+
+   PURPOSE:
+     All interactive logic for the Pebble Garden game dashboard:
+       - WebSocket connection to the Python game server
+       - Real-time game state rendering (flowers, scores, timer)
+       - UI phase transitions (waiting -> team_select -> playing -> won)
+       - SVG flower generation and growth animations
+       - Bilingual text support (English / Chinese)
+       - Facilitator button handlers (start, reset, mode, duration)
+       - Confetti celebration animation
+       - Fullscreen toggle
+
+   HOW IT WORKS:
+     On page load, connects to ws://localhost:8765. Server sends JSON
+     game state every ~150ms. Each message triggers updateGame(), which:
+       1. Determines mode (single vs competitive)
+       2. Updates pod count display
+       3. Routes to the phase handler (waiting, team_select, playing, won)
+       4. Updates flower gardens — spawning SVG flowers and animating
+          growth via CSS clip-height transitions
+
+   KEY DESIGN DECISIONS:
+     - Golden-ratio positioning (phi=0.618) for natural flower spread
+     - SVG flowers: 12 petal ellipses, stem, leaves, center. 10 colors.
+     - "Clip container" trick: outer div height transitions from 0,
+       revealing the flower from stem-up. Double rAF ensures paint.
+     - State diffing: only new flowers are spawned; existing updated.
+     - Button Points: keys 1-4 add to Team 1, q/w/e/r to Team 2.
+
+   DEPENDENCIES:
+     No external JS libraries. Pure vanilla JavaScript + native WebSocket.
+
+   SECTIONS:
+     1. STRINGS / i18n        9. Flower spawning
+     2. FLOWER_TYPES          10. WebSocket
+     3. Positioning            11. Main update (updateGame)
+     4. TREE_DEFS             12. Phase handlers
+     5. State variables       13. Garden updates
+     6. Bootstrap             14. UI helpers
+     7. Language toggle       15. Button handlers
+     8. Background trees      16-18. Confetti, fullscreen, conn dot
    ============================================================= */
 
 const WS_URL = "ws://localhost:8765";
@@ -157,9 +199,9 @@ const φ = 0.618033988749895;
 // X: 8–92% — covers the full usable width of each garden panel
 function flowerX(id) { return ((id * φ) % 1) * 84 + 8; }
 
-// Y: 1–44% from the bottom of the garden container — spreads across the full height
+// Y: 1–96% from the bottom of the garden container — fills the entire bottom 50% of the screen
 // Uses a complementary golden-ratio multiplier so X and Y are uncorrelated
-function flowerY(id) { return ((id * 0.381966 * 2.3) % 1) * 43 + 1; }
+function flowerY(id) { return ((id * 0.381966 * 2.3) % 1) * 95 + 1; }
 
 
 // ── Background tree configuration ────────────────────────────
@@ -184,6 +226,8 @@ let selectedDuration = 60;
 let lastTSCounts     = [-1, -1];
 let lastStateTeams   = null;   // last competitive teams array (for win overlay)
 let lastStateSingle  = null;   // last single state (for win overlay)
+let lastInstructor   = null;   // last known instructor device name (null = none)
+let buttonPoints     = false;  // whether keyboard button-points are enabled
 
 // Garden objects — el: DOM container, els: sparse array of plant elements, scale: size factor
 const SINGLE_GARDEN = { el: null, els: [], scale: 1.0 };
@@ -364,7 +408,9 @@ function updateGame(state) {
   const phase  = state.phase || "waiting";
   const winner = state.winner ?? null;
 
-  lastMode = mode;
+  lastMode       = mode;
+  lastInstructor = state.instructor || null;
+  buttonPoints   = !!state.button_points;
 
   // Pod count
   const totalDevices = state.total_connected ?? (
@@ -397,9 +443,9 @@ function updateGame(state) {
 
   // Garden / progress
   if (mode === "competitive") {
-    (state.teams || []).forEach(team => updateTeam(team));
+    (state.teams || []).forEach(team => updateTeam(team, state.show_match_percent !== false));
   } else {
-    updateProgress(state.score, state.progress, state.similarity);
+    updateProgress(state.score, state.progress, state.show_match_percent !== false ? state.similarity : null);
     updatePlants(state.plants, SINGLE_GARDEN);
   }
 }
@@ -450,10 +496,16 @@ function updateSelectionOverlay(state) {
       labelI.textContent = t("instructorWaiting");
     }
   } else {
-    // team_select — instructor is confirmed, lock the card
-    cardI.className    = "ts-card ts-full";
-    countI.textContent = "1";
-    labelI.textContent = t("instructorReady");
+    // team_select — instructor is confirmed (or skipped)
+    if (state.instructor) {
+      cardI.className    = "ts-card ts-full";
+      countI.textContent = "1";
+      labelI.textContent = t("instructorReady");
+    } else {
+      cardI.className    = "ts-card ts-flash-red";
+      countI.textContent = "0";
+      labelI.textContent = "no instructor";
+    }
   }
 
   // Single mode: only the instructor needs to lock in — no teams.
@@ -464,6 +516,8 @@ function updateSelectionOverlay(state) {
   if (isSingle) {
     document.getElementById("btn-next-team").style.display  = "none";
     document.getElementById("btn-begin-game").style.display = "none";
+    document.getElementById("btn-confirm-instructor").style.display =
+      (phase === "instructor_select") ? "" : "none";
     return;
   }
 
@@ -522,9 +576,9 @@ function updateSelectionOverlay(state) {
   }
 
   // ── Buttons ───────────────────────────────────────────────
-  // "Next" — confirm instructor, only once instructor has shaken in
+  // "Next" — confirm instructor (shown even without an instructor to allow skipping)
   document.getElementById("btn-confirm-instructor").style.display =
-    (phase === "instructor_select" && !!state.instructor) ? "" : "none";
+    (phase === "instructor_select") ? "" : "none";
   // "Next: Team 2" — only during team_select step 0
   document.getElementById("btn-next-team").style.display =
     (phase === "team_select" && step === 0) ? "" : "none";
@@ -585,11 +639,11 @@ function updatePodCount(n) {
 }
 
 // ── Competitive team update ───────────────────────────────────
-function updateTeam(team) {
+function updateTeam(team, showSimilarity = true) {
   const i = team.id;
   const pct = Math.round((team.similarity ?? 0) * 100);
   document.getElementById(`team-score-label-${i}`).textContent =
-    team.similarity === undefined ? t("teamScore", team.score ?? 0) : t("teamScoreSimilarity", team.score ?? 0, pct);
+    (!showSimilarity || team.similarity === undefined) ? t("teamScore", team.score ?? 0) : t("teamScoreSimilarity", team.score ?? 0, pct);
   updatePlants(team.plants, TEAM_GARDENS[i]);
 }
 
@@ -601,6 +655,19 @@ function updateBadge(phase) {
     case "waiting": badge.textContent = t("badgeWaiting"); badge.classList.add("waiting"); break;
     case "playing": badge.textContent = t("badgePlaying"); badge.classList.add("active");  break;
     case "won":     badge.textContent = t("badgeWon");     badge.classList.add("won");     break;
+  }
+  const notice = document.getElementById("no-instructor-notice");
+  if (phase === "playing" && !lastInstructor) {
+    notice.classList.remove("hidden");
+  } else {
+    notice.classList.add("hidden");
+  }
+
+  const restart = document.getElementById("btn-restart");
+  if (phase === "playing") {
+    restart.classList.remove("hidden");
+  } else {
+    restart.classList.add("hidden");
   }
 }
 
@@ -665,12 +732,21 @@ function attachButtons() {
   document.getElementById("btn-start").addEventListener("click", () =>
     sendAction("start", { mode: selectedMode, duration: selectedDuration })
   );
+  document.getElementById("btn-restart").addEventListener("click", () =>
+    sendAction("reset")
+  );
   document.getElementById("btn-reset").addEventListener("click", () =>
     sendAction("reset")
   );
-  document.getElementById("btn-confirm-instructor").addEventListener("click", () =>
-    sendAction("confirm_instructor")
-  );
+  document.getElementById("btn-confirm-instructor").addEventListener("click", () => {
+    if (!lastInstructor) {
+      const card = document.getElementById("ts-card-instructor");
+      card.classList.remove("ts-flash-red");
+      void card.offsetWidth;
+      card.classList.add("ts-flash-red");
+    }
+    sendAction("confirm_instructor");
+  });
   document.getElementById("btn-next-team").addEventListener("click", () =>
     sendAction("next_team")
   );
@@ -702,6 +778,21 @@ function attachButtons() {
   document.getElementById("lang-toggle").addEventListener("click", () => {
     lang = lang === "en" ? "zh" : "en";
     applyLang();
+  });
+
+  // Button Points: keyboard shortcuts to add score during competitive play
+  const BUTTON_POINTS_MAP = {
+    "1": [0, 1], "2": [0, 2], "3": [0, 3], "4": [0, 4],
+    "q": [1, 1], "w": [1, 2], "e": [1, 3], "r": [1, 4],
+  };
+  document.addEventListener("keydown", e => {
+    if (!buttonPoints) return;
+    if (lastMode !== "competitive" || lastPhase !== "playing") return;
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    const mapping = BUTTON_POINTS_MAP[e.key.toLowerCase()];
+    if (!mapping) return;
+    e.preventDefault();
+    sendAction("add_score", { team: mapping[0], amount: mapping[1] });
   });
 }
 

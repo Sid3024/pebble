@@ -1,0 +1,747 @@
+HOW PEBBLE WORKS — A COMPLETE WALKTHROUGH
+==========================================
+
+This document walks you through the entire Pebble system from the moment
+you turn on the pods to the moment flowers bloom on screen. Every step is
+explained: what happens, which file does it, which function runs, and why.
+
+
+========================================================================
+PART 1: THE PODS WAKE UP (Firmware Side)
+========================================================================
+
+Each Pebble pod is a tiny computer called an XIAO ESP32S3. It has an IMU
+sensor (MPU6050) soldered to it that can detect movement — acceleration
+and rotation — like the motion sensor in your phone. When you plug in
+the USB cable or connect a battery, the firmware boots.
+
+STEP 1 — setup() runs  [firmware/src/main.cpp]
+
+   The very first thing the firmware does is open a serial connection
+   (for debugging) and then call try_hw_init(). This function does
+   several things in order:
+
+   a) Vibration motor init
+      vibration_init() sets up a PWM channel on the motor pin so the
+      pod can buzz later when the game tells it to.
+      [firmware/src/vibration/vibration.cpp]
+
+   b) I2C bus recovery
+      The MPU6050 sensor talks to the main chip over two wires called
+      SDA (data) and SCL (clock). If the pod lost power while the sensor
+      was in the middle of sending data, the SDA wire can get "stuck"
+      low, and no communication works until it's freed. The firmware
+      pulses the clock wire (SCL) up to 9 times — this is the standard
+      way to unstick an I2C bus. Think of it as knocking on a jammed
+      door until it opens.
+      [firmware/src/main.cpp → i2c_bus_recover()]
+
+   c) Wire.begin() and Wire.setTimeOut(50)
+      Wire is the Arduino library for I2C communication. We start it
+      with our specific SDA/SCL pins (D4 and D5). The timeout is set
+      to 50 milliseconds — if any I2C operation takes longer than that,
+      it gives up instead of waiting the default 1000ms. This matters
+      because on this chip, if the main task blocks for too long, the
+      USB serial connection drops (the XIAO ESP32S3 uses "USB-CDC"
+      which needs the CPU to stay responsive).
+
+   d) IMU initialisation
+      imu_init() talks to the MPU6050 over I2C to check it's alive
+      (reads a "WHO_AM_I" register — the chip should reply 0x68), then
+      configures it: sample rate, acceleration range (±2g), gyroscope
+      range (±250°/s). If this fails, the firmware prints an error,
+      runs diagnostics, and retries every 5 seconds.
+      [firmware/src/accel/accel.cpp → imu_init()]
+
+   e) Start the sampling task
+      window_task_start() creates a FreeRTOS task — think of it as a
+      separate thread running alongside the main code. This task is the
+      heartbeat of the whole system.
+      [firmware/src/window/window.cpp → window_task_start()]
+
+STEP 2 — BLE advertising starts  [firmware/src/ble/ble.cpp]
+
+   Also during setup(), ble_init() turns the pod into a Bluetooth Low
+   Energy (BLE) device. It:
+
+   - Reads the chip's unique MAC address and creates a name like
+     "Pebble_XXXXXX" (last 3 bytes of the MAC in hex).
+   - Creates a "GATT service" with two "characteristics":
+     * WINDOW characteristic (notify): the pod SENDS data through this.
+     * COMMAND characteristic (write): the pod RECEIVES commands through this.
+   - Starts advertising: the pod broadcasts "Hey, I'm Pebble_XXXXXX!"
+     over the air so nearby devices can find it.
+
+   At this point, the pod is alive, sampling the IMU, and advertising
+   over BLE. It's waiting for someone to connect.
+
+STEP 3 — The sampling task runs forever  [firmware/src/window/window.cpp]
+
+   The FreeRTOS sampling task (sampling_task) is a loop that runs
+   exactly 100 times per second (100 Hz). Every 10 milliseconds:
+
+   a) It reads one sample from the IMU: acceleration (ax, ay, az in g)
+      and rotation (gx, gy, gz in degrees/sec), plus roll and pitch.
+      [firmware/src/accel/accel.cpp → imu_read()]
+
+   b) It removes gravity using an Exponential Moving Average (EMA):
+      The accelerometer always reads ~1g downward due to gravity. We
+      don't want gravity to count as "movement", so we track a slowly-
+      moving average of the acceleration (alpha = 0.02, so it updates
+      very gradually). Subtracting this average from the raw reading
+      gives us just the movement component. If you hold the pod still,
+      the movement is near zero. If you shake it, you get big values.
+
+   c) It accumulates 25 samples into one "window":
+      Every 25 samples (25 × 10ms = 250ms), the task averages all the
+      accumulated values and produces one ImuWindow struct containing:
+      - Average acceleration per axis (gravity removed)
+      - Average gyroscope per axis
+      - Average roll and pitch
+      - An "activity" score (movement magnitude + tiny gyro contribution)
+
+   d) It pushes the finished window into a ring buffer:
+      The ring buffer holds up to 128 windows (~32 seconds). The main
+      loop will drain this buffer.
+
+STEP 4 — The main loop sends windows over BLE  [firmware/src/main.cpp]
+
+   The Arduino loop() function runs continuously. Every 100ms, it
+   checks the ring buffer for any finished windows. For each one:
+
+   a) ble_send_window() packs the window into a 20-byte binary packet:
+      - Byte 0: magic number 0x50 ('P' for Pebble)
+      - Byte 1: version number (2)
+      - Bytes 2-3: activity score (multiplied by 1000, stored as uint16)
+      - Bytes 4-19: ax, ay, az, gx, gy, gz, roll, pitch
+        (each multiplied by 1000 or 100 and stored as int16 to save space)
+      [firmware/src/ble/ble.cpp → ble_send_window()]
+
+   b) This 20-byte packet is sent as a BLE "notification" to whoever
+      is connected. If nobody is connected, the data is still generated
+      but goes nowhere.
+
+   So to summarise the firmware: every 250ms, the pod reads 25 IMU
+   samples, averages them, packs them into 20 bytes, and blasts them
+   over Bluetooth. That's 4 packets per second per pod.
+
+
+========================================================================
+PART 2: THE PYTHON HOST STARTS UP (Computer Side)
+========================================================================
+
+On your laptop, you run: python -m FlowerGame
+This starts the game backend.
+
+STEP 5 — main.py boots  [FlowerGame/main.py]
+
+   cli() parses command-line arguments, then asyncio.run(main()) kicks
+   off two things running at the same time (concurrently via asyncio):
+
+   a) The WebSocket server (server.run())
+   b) The BLE connection manager (_run_with_ble())
+
+STEP 6 — BLE scanning  [ble/scanner.py]
+
+   _run_with_ble() calls scan_for_pebbles(). This uses the "bleak"
+   Python library to listen for BLE advertisements for 10 seconds.
+   It filters the results, keeping only devices whose name starts with
+   "Pebble_" or whose advertised service UUID matches Pebble's UUID.
+
+   If it finds 2 pods, you'll see:
+     [HUB] Found 2: ['Pebble_XXXXXX', 'Pebble_YYYYYY']
+
+STEP 7 — One PebbleClient per pod  [ble/client.py]
+
+   For each discovered pod, a PebbleClient object is created. Each one
+   runs as its own asyncio task. Here's what one client does:
+
+   a) Connect: Uses BleakClient to establish a BLE connection to the pod.
+      The pod stops advertising (it can only talk to one central at a time).
+
+   b) Subscribe: Calls client.start_notify(WINDOW_CHAR_UUID, callback).
+      This tells the pod "send me notifications on your window
+      characteristic." From now on, every time the firmware calls
+      ble_send_window(), the Python callback fires.
+
+   c) The callback (_on_window) runs every ~250ms:
+      - Receives 20 raw bytes from BLE.
+      - Calls parse_imu_window(data) which unpacks the binary packet
+        back into an ImuWindow Python object with ax, ay, az, etc.
+        [ble/imu.py → parse_imu_window()]
+      - Calls controller.process_imu_window(device_name, imu_window)
+        to hand the data to the game engine.
+
+   d) Every 1 second, the client checks for pending vibration commands
+      (pop_vibration_commands), and if any exist, writes each pattern ID
+      (a single byte) to the pod's COMMAND characteristic. The firmware
+      receives this and plays the vibration pattern.
+
+   e) If the connection drops, the client waits 5 seconds and reconnects.
+
+STEP 8 — The WebSocket server starts  [FlowerGame/ws/server.py]
+
+   Meanwhile, server.run() starts a WebSocket server on port 8765. It
+   also kicks off a broadcast loop that runs every 150ms. The server
+   sits in the middle of everything:
+
+   - BLE clients call server.process_imu_window() to feed in sensor data.
+   - The server forwards this to whatever game controller is active.
+   - Every 150ms, the server calls controller.get_state(), serialises it
+     to JSON, and sends it to all connected dashboard browsers.
+   - The dashboard can send actions back (start, reset, etc.) which the
+     server routes to the controller.
+
+
+========================================================================
+PART 3: THE DASHBOARD CONNECTS (Browser Side)
+========================================================================
+
+STEP 9 — Open index.html  [GameDashboard/index.html]
+
+   You open GameDashboard/index.html in Chrome. It loads game.js which
+   immediately tries to connect to ws://localhost:8765.
+
+STEP 10 — WebSocket handshake  [GameDashboard/static/game.js]
+
+   connect() creates a WebSocket. On successful connection:
+   - The server sends the current game state immediately.
+   - game.js calls updateGame(state) which renders the "waiting" screen:
+     a big start button, duration selector (30s / 1min / 2min / 5min),
+     and mode selector (Single Team / Multiplayer).
+
+   At this point, you see the waiting overlay. Pods are connected and
+   sending data, but the game hasn't started yet. The data flows in but
+   gets silently dropped because there's no active controller.
+
+
+========================================================================
+PART 4: THE GAME BEGINS
+========================================================================
+
+STEP 11 — Facilitator presses "Start Session"  [game.js → server.py]
+
+   When you click "Start Session" with "Single Team" selected, game.js
+   sends: {"action": "start", "mode": "single", "duration": 60}
+
+   The WebSocket server receives this in _handle_action() and:
+   a) Creates a FlowerController(config) — the single-team game engine.
+   b) Calls controller.start_session(60) — sets phase to "instructor_select".
+   [FlowerGame/ws/server.py → _handle_action()]
+   [FlowerGame/engine/controller.py → FlowerController]
+
+STEP 12 — Instructor selection phase
+
+   Now the game is in "instructor_select" phase. The dashboard shows
+   "Instructor, shake your pod to begin."
+
+   Every 250ms, each pod sends a window. The server forwards it to the
+   controller's process_imu_window(), which calls _handle_instructor_select().
+
+   _handle_instructor_select() computes a "motion score" for each window:
+   - Calls selection_motion_score(window) which returns window.shake_score
+     (basically: how hard is this pod being shaken right now?)
+     [FlowerGame/engine/motion.py]
+   - Compares against instructor_select_shake_threshold (default 3.0).
+   - If the score exceeds the threshold, that pod becomes the instructor!
+   - The pod gets a vibration buzz (VIBR_MILESTONE2) to confirm.
+   [FlowerGame/engine/controller.py → _handle_instructor_select()]
+
+STEP 13 — Confirm instructor
+
+   The dashboard shows the instructor's name and a "Next" button. When
+   the facilitator clicks it, game.js sends {"action": "confirm_instructor"}.
+
+   The server calls controller.confirm_instructor() which:
+   - Sets self._start_time = time.monotonic() (starts the countdown).
+   - Sets self.phase = "playing".
+   [FlowerGame/engine/controller.py → confirm_instructor()]
+
+   For competitive mode, there are extra steps between instructor
+   selection and playing: team_select step 0 (Team 1 joins by shaking),
+   next_team(), team_select step 1 (Team 2 joins), begin_game().
+   [FlowerGame/engine/competitive.py]
+
+
+========================================================================
+PART 5: THE GAME IS PLAYING — THIS IS WHERE THE MAGIC HAPPENS
+========================================================================
+
+STEP 14 — 3-second warmup (both single and competitive mode)
+
+   For the first 3 seconds after the game starts, student pods DO NOT
+   get scored. Their gravity estimates are still stabilising. During
+   this warmup, the gravity EMA is updated every window, but no
+   similarity score is computed and no windows are accumulated.
+
+   Why? The gravity EMA starts at (0, 0, 1) — assuming the pod is
+   perfectly flat. If the pod is held at an angle, the EMA needs a few
+   seconds to converge to the pod's actual resting orientation. Without
+   this warmup, the gravity subtraction would be wrong, and the system
+   would think the pod is "moving" when it's actually just sitting still
+   at an angle. That would produce false high similarity scores.
+
+   The instructor is NOT affected by the warmup — their windows still
+   accumulate and build the reference history during these 3 seconds,
+   so the reference is ready the moment scoring begins.
+
+   [FlowerGame/engine/controller.py → _handle_playing(), warmup check]
+   [FlowerGame/engine/competitive.py → _handle_playing(), warmup check]
+
+STEP 15 — Instructor windows build reference history
+
+   The instructor's pod keeps sending windows. Each one:
+   a) Updates the instructor's gravity EMA (the slow-moving average that
+      tracks which direction is "down" for this pod).
+   b) Gets added to an accumulation buffer (_instructor_accum).
+   c) When the buffer has enough windows (similarity_accumulate_windows,
+      default 2), the windows are MERGED into one by averaging:
+      [FlowerGame/engine/similarity.py → merge_windows()]
+   d) The merged window is pushed into _reference_history (a deque that
+      holds the last 2 merged windows). This is what students will be
+      compared against.
+
+STEP 16 — Student windows get similarity-scored
+
+   When a student pod's window arrives during the playing phase:
+
+   a) Gravity EMA updates — same slow tracking as the instructor.
+
+   b) The window goes into the student's accumulation buffer.
+
+   c) When the buffer is full (2 windows = 500ms), the windows are
+      merged into one via merge_windows().
+
+   d) best_similarity() is called:
+      [FlowerGame/engine/similarity.py → best_similarity()]
+
+      This compares the student's merged window against EACH of the
+      instructor's last 2 reference windows and picks the best match.
+      Why 2? Because the pods' clocks aren't synchronised — the "same"
+      physical movement might land in window N for the instructor but
+      window N+1 for the student. Trying both catches the overlap.
+
+   e) For each comparison, compute_similarity() runs. This is explained
+      in detail below.
+
+
+========================================================================
+HOW THE SIMILARITY SCORE IS ACTUALLY CALCULATED
+========================================================================
+[FlowerGame/engine/similarity.py → compute_similarity()]
+
+WHAT DATA COMES IN
+------------------
+
+Each pod sends an ImuWindow every 250ms. A window contains:
+
+   ax, ay, az  — acceleration on 3 axes (in units of g, where 1g = gravity)
+   gx, gy, gz  — rotation speed on 3 axes (degrees per second)
+   roll, pitch  — tilt angles (degrees)
+
+The similarity score uses ax, ay, az (acceleration) for movement, and
+roll, pitch (tilt angles) to figure out which way "down" is for each pod.
+Gyroscope data is not used for similarity.
+
+By the time the similarity function receives the data, 2 raw windows have
+been merged (averaged) into 1, so the effective comparison interval is
+500ms. This smooths out tiny jitters and gives a cleaner picture of what
+direction the person was actually moving over that half-second.
+
+
+THE ORIENTATION PROBLEM AND HOW WE SOLVE IT
+--------------------------------------------
+
+The accelerometer measures movement on 3 axes (x, y, z) relative to the
+POD, not relative to the earth. If the instructor holds their pod flat
+and waves up, that shows up on their z-axis. If a student holds theirs
+sideways and waves up, the same physical movement shows up on a different
+axis. Comparing x-to-x and z-to-z would miss the match entirely.
+
+The fix: instead of comparing raw axes, we split movement into two parts:
+  1. VERTICAL movement (up/down relative to gravity) — direction CAN be
+     compared because both pods agree on which way is "down"
+  2. HORIZONTAL movement (sideways relative to gravity) — direction
+     CANNOT be compared (we don't know which way the pod is facing
+     horizontally — there's no compass), so we only compare intensity
+
+Each pod's roll and pitch angles tell us which way gravity is pulling
+on that specific pod. We use this to figure out "down" for each pod
+independently. Then we project the movement onto that direction.
+
+
+STEP 1: GRAVITY IS ALREADY REMOVED (by firmware)
+-------------------------------------------------
+
+The firmware removes gravity from ax, ay, az before sending them. So the
+values that arrive in Python are pure movement only — holding the pod
+still gives values near zero. The firmware does this by tracking a slow
+EMA of raw acceleration (see earlier section) and subtracting it.
+
+
+STEP 2: FIGURE OUT "DOWN" FOR EACH POD
+---------------------------------------
+
+The firmware also sends roll and pitch angles, which ARE still computed
+from raw acceleration (including gravity). These tell us the pod's tilt.
+
+From roll and pitch, we reconstruct a "gravity direction vector" — a
+unit vector pointing in the direction of gravity in the pod's local
+coordinate frame. This vector tells us which way "down" is for this pod.
+
+   Example: Pod held flat       → gravity direction = (0, 0, 1)  (down is z)
+   Example: Pod held on its side → gravity direction = (1, 0, 0)  (down is x)
+   Example: Pod tilted 45°      → gravity direction = (0.7, 0, 0.7)
+
+This gravity direction is smoothed with an EMA (just like the acceleration
+gravity EMA) so it doesn't jump around during shaking.
+[FlowerGame/engine/similarity.py → gravity_from_roll_pitch()]
+
+
+STEP 3: DECOMPOSE MOVEMENT INTO VERTICAL AND HORIZONTAL
+--------------------------------------------------------
+
+Using the gravity direction vector, we split each pod's movement:
+
+   vertical = how much of the movement is along gravity (up/down)
+     → This is a signed number: positive = moving down, negative = up
+     → Calculated by projecting the movement vector onto gravity direction
+
+   horizontal = how much of the movement is perpendicular to gravity
+     → This is a magnitude only (no direction info)
+     → Calculated as: sqrt(total² - vertical²)
+
+   Example: Pod held flat, shaken upward at 0.5g:
+     movement = (0, 0, -0.5)     gravity direction = (0, 0, 1)
+     vertical = dot product = -0.5   (negative = upward, correct!)
+     horizontal = sqrt(0.25 - 0.25) = 0.0
+
+   Example: Pod held flat, shaken to the right at 0.3g:
+     movement = (0.3, 0, 0)      gravity direction = (0, 0, 1)
+     vertical = dot product = 0.0
+     horizontal = sqrt(0.09 - 0) = 0.3
+
+   Example: Pod tilted 45°, shaken upward at 0.5g:
+     movement = (0, 0, -0.5)     gravity direction = (0.7, 0, 0.7)
+     vertical = 0×0.7 + 0×0 + (-0.5)×0.7 = -0.35  (upward component)
+     horizontal = sqrt(0.25 - 0.12) = 0.36
+
+
+STEP 4: CHECK IF THERE'S ENOUGH MOVEMENT
+-----------------------------------------
+
+If the total movement magnitude for EITHER pod is below 0.005g, the
+score is immediately 0. Not enough motion to compare.
+
+
+STEP 5: COMPARE VERTICAL DIRECTION
+-----------------------------------
+
+This is the only direction check we can do (because horizontal direction
+is unknown without a compass).
+
+   Both vertical values positive (both moving down) → SAME ✓
+   Both vertical values negative (both moving up)   → SAME ✓
+   One positive, one negative (one up, one down)    → OPPOSITE ✗
+
+We also check if the vertical movement is "significant" (above half the
+minimum threshold for BOTH pods). If both pods have negligible vertical
+movement (they're moving mostly sideways), the direction check is skipped
+— there's no vertical direction to be wrong about.
+
+
+STEP 6: COMPARE MAGNITUDES
+---------------------------
+
+For both vertical and horizontal, compute magnitude ratios:
+
+   vertical ratio = min(|instructor_vert|, |student_vert|)
+                  / max(|instructor_vert|, |student_vert|)
+
+   horizontal ratio = min(instructor_horiz, student_horiz)
+                    / max(instructor_horiz, student_horiz)
+
+Both are softened by raising to the power of 1/8, same as before:
+   0.33 → 0.87, 0.1 → 0.75  (makes intensity comparison forgiving)
+
+Then they're combined with a WEIGHTED average:
+   magnitude_score = vert_weight × vert_ratio + (1-vert_weight) × horiz_ratio
+
+Where vert_weight = fraction of total movement that is vertical.
+If someone is mostly moving up/down, the vertical ratio dominates.
+If mostly moving sideways, the horizontal ratio dominates.
+
+
+STEP 7: COMBINE INTO A FINAL SCORE
+-----------------------------------
+
+PATH A — VERTICAL MATCHES (or not enough vertical to judge):
+
+   score = 0.9 + 0.1 × magnitude_score     (90-100%)
+
+   If you're moving the same vertical direction (or both moving sideways),
+   you get at least 90%. Magnitude determines how close to 100%.
+
+   Example: Both push up with similar force.
+   Vertical: both negative (up) → SAME ✓
+   Magnitude score: 0.85
+   Final: 0.9 + 0.1 × 0.85 = 0.985 → 98.5%!
+
+PATH B — VERTICAL IS CLEARLY OPPOSITE:
+
+   score = 0.25 × (1 - vert_weight)² × magnitude_score     (0-25%)
+
+   Capped below 25% — much harsher than the matching path. The penalty
+   uses vert_weight SQUARED so even moderate vertical opposition gets
+   punished heavily:
+
+   Example: Instructor pushes up, student pushes down (purely vertical).
+   vert_weight = 1.0
+   Final: 0.25 × (1-1.0)² × 0.9 = 0.0 → 0% match.
+
+   Example: Movement is 50% vertical, 50% horizontal, but vertical
+   is opposite.
+   vert_weight = 0.5, magnitude_score = 0.9
+   Final: 0.25 × (0.5)² × 0.9 = 0.056 → 5.6% match. Very harsh.
+
+   Example: Mostly horizontal movement, tiny opposite vertical blip.
+   vert_weight = 0.1, magnitude_score = 0.8
+   Final: 0.25 × (0.9)² × 0.8 = 0.162 → 16% match. Still punished.
+
+   The squared term means the penalty drops off steeply: you need
+   almost entirely horizontal movement (vert_weight near 0) before
+   the penalty becomes mild. Any meaningful vertical opposition
+   tanks the score.
+
+
+WHY IS THE ALGORITHM DESIGNED THIS WAY?
+---------------------------------------
+
+The key insight: we can only reliably compare VERTICAL direction (up vs
+down) because gravity gives us a shared reference for "down". Horizontal
+direction (left vs right, forward vs back) requires knowing which way
+the pod is facing, and without a compass (magnetometer), we can't know.
+
+So the algorithm is generous with horizontal movement (assumes it matches
+since we can't check) and strict with vertical movement (the one thing
+we CAN check).
+
+This means:
+- Up/down exercises (jumping, waving arms up) → reliable scoring ✓
+- Sideways exercises (waving left/right) → scored on intensity only,
+  direction assumed to match. Usually correct since everyone does the
+  same exercise. Can't detect someone going left while others go right.
+- Mixed exercises → vertical component is checked for direction,
+  horizontal component checked for intensity only.
+
+The 90%/50% split still creates a clear gap that players can feel.
+
+
+PHASE COMPENSATION — WHY WE CHECK 2 INSTRUCTOR WINDOWS
+-------------------------------------------------------
+
+There's a timing problem: each pod starts its 250ms window at a
+different moment (whenever it happened to connect). If the instructor
+waves at time T=0.4s, that motion might land in the instructor's
+Window #2 (0.25-0.50s) but the student's Window #3 (0.50-0.75s).
+
+If we only compared window-for-window, we'd miss the match entirely.
+
+The fix: best_similarity() keeps the instructor's LAST 2 merged windows
+and compares the student against BOTH. Whichever comparison gives the
+higher score is used. This effectively gives a ±500ms tolerance for
+timing misalignment between pods.
+
+[FlowerGame/engine/similarity.py → best_similarity()]
+
+
+WINDOW ACCUMULATION — WHY WE MERGE BEFORE SCORING
+--------------------------------------------------
+
+The firmware sends one window every 250ms. But 250ms is very short —
+if you wave your arm up and then down in a single 250ms window, the up
+and down cancel each other out and the average acceleration is near zero.
+It looks like you didn't move.
+
+By merging 2 windows before scoring (similarity_accumulate_windows = 2),
+the effective comparison interval becomes 500ms. This gives slower,
+more deliberate movements time to register as a clear direction without
+cancelling themselves out.
+
+You can change this in config.py:
+   1 → 250ms (fast, but small movements cancel out)
+   2 → 500ms (current default, good balance)
+   4 → 1 second (only very deliberate movements register)
+
+[FlowerGame/engine/similarity.py → merge_windows()]
+
+STEP 17 — Score turns into flower growth
+
+   _apply_similarity() takes the similarity result and computes growth:
+   [FlowerGame/engine/controller.py → _apply_similarity()]
+
+     growth = growth_per_window × (similarity_score ^ exponent)
+
+   With the defaults (growth_per_window=3.0, exponent=2.0):
+     - 100% match → 3.0 × 1.0² = 3.0 points
+     - 90% match  → 3.0 × 0.81 = 2.43 points
+     - 50% match  → 3.0 × 0.25 = 0.75 points
+     - 30% match  → 3.0 × 0.09 = 0.27 points
+
+   The exponent (2.0) makes it so high matches are rewarded much more
+   generously than mediocre matches. This encourages trying harder.
+
+   The growth is added to the shared score (self._score).
+
+STEP 18 — Score turns into flowers
+
+   _compute_plants() converts the score into a list of flowers:
+   [FlowerGame/engine/controller.py → _compute_plants()]
+
+   With sprout_points_per_plant = 1.0:
+     Score 5.7 → 5 fully-grown flowers + 1 flower at 70% growth.
+
+   This plant list is included in every state broadcast.
+
+STEP 19 — State broadcasts to the dashboard  [server.py → game.js]
+
+   Every 150ms, the broadcast loop calls get_state() which packages
+   everything: phase, score, time remaining, per-device similarity,
+   plant list. This JSON goes to the browser.
+
+   game.js receives it in updateGame(state):
+   - updateProgress() shows "Score: 47 pts · Match: 92%"
+   - updateTimer() shows the countdown
+   - updatePlants() adds/updates flowers in the garden:
+     * New flowers get a brand-new SVG element (stem, leaves, 12 petals,
+       center circle) placed using golden-ratio positioning (phi=0.618)
+       so they spread naturally without clumping.
+     * The flower starts at height 0 and CSS-transitions to full height
+       over 2 seconds — it looks like it's growing from the ground up.
+     * Fully-grown flowers get a "bloomed" class that adds a gentle
+       swaying animation.
+   [GameDashboard/static/game.js → updatePlants(), spawnFlower()]
+
+
+========================================================================
+PART 6: VIBRATION FEEDBACK
+========================================================================
+
+STEP 20 — Milestones trigger vibrations
+
+   After every similarity computation, _check_milestones() runs:
+   [FlowerGame/engine/controller.py → _check_milestones()]
+
+   It checks three kinds of milestones:
+
+   a) Time milestones: At 50% and 75% of the game duration, all pods
+      get a vibration pattern (VIBR_MILESTONE2 and VIBR_MILESTONE3).
+
+   b) Score milestones: Every 50 flowers, all pods get VIBR_FLOWER_50.
+
+   c) Last 10 seconds: When ≤10 seconds remain, all pods get VIBR_LAST_10
+      (rapid anxious pulses to create urgency).
+
+   These vibration IDs are queued in _pending_vibrations (a dict of
+   device_name → list of pattern IDs).
+
+STEP 21 — Vibrations travel back to the pods
+
+   Remember the PebbleClient from Step 7? Every 1 second, it calls
+   pop_vibration_commands(device_name), which drains the pending list.
+
+   For each pattern ID (e.g. 7 for VIBR_FLOWER_50), the Python client
+   writes a single byte to the pod's COMMAND BLE characteristic.
+
+   On the firmware side, the CommandCallbacks::onWrite() fires, extracts
+   the byte, and calls the command callback which calls vibration_play().
+   [firmware/src/ble/ble.cpp → CommandCallbacks::onWrite()]
+   [firmware/src/vibration/vibration.cpp → vibration_play()]
+
+   vibration_play() cancels any currently-playing pattern and spawns a
+   new FreeRTOS task that drives the motor in a specific rhythm:
+   - VIBR_TEAM1: quick triple-tap (so you can tell it's Team 1 by feel)
+   - VIBR_TEAM2: long-short pattern (distinctly different from Team 1)
+   - VIBR_FLOWER_50: happy double-tap + hold
+   - VIBR_WIN: rapid burst followed by a long sustained buzz
+   - VIBR_LAST_10: 5 rapid anxious pulses
+
+
+========================================================================
+PART 7: GAME ENDS
+========================================================================
+
+STEP 22 — Timer expires
+
+   _handle_playing() checks self.time_remaining every time a window
+   arrives. When it hits zero:
+
+   Single mode:
+     - Phase becomes "won".
+     - All pods get VIBR_WIN.
+     [FlowerGame/engine/controller.py → _handle_playing()]
+
+   Competitive mode:
+     - _end_game() compares both teams' scores.
+     - The team with more points wins. If tied, winner = None.
+     - Winning team (or all pods on tie) gets VIBR_WIN.
+     [FlowerGame/engine/competitive.py → _end_game()]
+
+STEP 23 — Dashboard shows the win screen  [game.js]
+
+   When game.js sees phase="won", updatePhaseUI() shows the win overlay:
+   - Single mode: "Time's Up! Final score: X pts — amazing work!"
+   - Competitive: "Team N Wins!" with both teams' scores, or "It's a Tie!"
+   - launchConfetti() fills the screen with coloured particles.
+   - A "Play Again" button sends {"action": "reset"} to start over.
+
+
+========================================================================
+PART 8: COMPETITIVE MODE DIFFERENCES
+========================================================================
+
+Competitive mode adds extra steps between instructor selection and play:
+
+1. After instructor is confirmed, phase becomes "team_select" (step 0).
+2. Players shake pods to join Team 1 (the motion threshold is checked
+   the same way as instructor selection). Each joining pod gets a
+   VIBR_TEAM1 buzz and is assigned to team 0.
+3. Facilitator clicks "Next: Team 2" → step becomes 1.
+4. Players shake to join Team 2 → VIBR_TEAM2 buzz, team 1.
+5. Facilitator clicks "Let's Play!" → timer starts, phase = "playing".
+6. Late joiners (pods that connect during play) are auto-assigned to
+   the smaller team.
+7. Each team has its own score. Button Points (keys 1-4 and q-w-e-r)
+   let the facilitator manually add bonus points during play.
+8. Winner is determined by higher score when time runs out.
+
+All the similarity scoring works the same — the instructor's reference
+is shared by both teams. Each team just accumulates score separately.
+[FlowerGame/engine/competitive.py]
+
+
+========================================================================
+PART 9: THE LED STRIP (Optional)
+========================================================================
+
+There's a separate XIAO ESP32S3 board running the LEDLight firmware.
+It connects to the main system via BLE as a client, receives game state,
+and maps it to LED animations on a WS2812B strip:
+- During play: a "tug of war" where Team 1's colour fills from one end
+  and Team 2's from the other, with the boundary determined by the
+  score ratio. A bright spark pixel sits at the boundary.
+- On win: the winning team's colour blinks across the whole strip.
+- On tie: both colours alternate.
+[LEDLight/src/led/led.cpp]
+
+
+========================================================================
+SUMMARY: THE COMPLETE DATA FLOW IN ONE SENTENCE
+========================================================================
+
+MPU6050 sensor (100 Hz) → firmware averages 25 samples into a window
+(250ms) → packs into 20 bytes → sends over BLE → Python unpacks →
+game engine removes gravity, compares student vs instructor axis by axis
+→ similarity score (0-1) → growth = score² × 3 points → flowers appear
+on the web dashboard → milestones trigger vibration commands sent back
+over BLE → firmware plays vibration pattern on the motor.

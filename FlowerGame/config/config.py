@@ -1,3 +1,29 @@
+"""
+Central configuration for the FlowerGame backend.
+
+This file defines FlowerConfig, a Python dataclass that holds every tunable
+parameter for the flower-growing game.  All default values are set here and
+shared by every game mode (single-team and competitive).
+
+How it fits into Pebble:
+    FlowerConfig is instantiated once in main.py and passed to the WebSocket
+    server, which in turn passes it to whichever game controller (FlowerController
+    or CompetitiveFlowerController) is created for the current session.  The
+    dashboard also receives some of these values (e.g. game_durations) so it
+    can render the UI accordingly.
+
+Design notes:
+    - This is a plain dataclass with default values -- no file I/O, no env vars.
+      To change a setting, either edit the default here or subclass/override at
+      construction time.
+    - Do NOT change default values without understanding downstream effects;
+      they are tuned for the physical Pebble pods and the real-time feel of the
+      game.
+
+Dependencies:
+    - dataclasses (stdlib): Provides the @dataclass decorator.
+"""
+
 from dataclasses import dataclass
 
 
@@ -56,6 +82,18 @@ class FlowerConfig:
     # At rest sum ≈ 300.  330 ≈ 10 % above resting — slow deliberate movement.
     # Raise if accidental joins occur; lower if users struggle to register.
     team_select_shake_threshold: float = 400.0
+
+    # --- Button Points (competitive mode only) ---
+    # When True, keyboard keys add bonus points directly to a team's score:
+    #   1/2/3/4 → Team 1 +1/+2/+3/+4 pts
+    #   q/w/e/r → Team 2 +1/+2/+3/+4 pts
+    button_points: bool = True
+
+    # --- UI display ---
+    # Controls whether the match % is shown alongside the score in the game UI.
+    # "show" → "Score: X pts · Match: Y%" (default)
+    # "hide" → "Score: X pts" only
+    show_match_percent: str = "hide"
 
     # --- Similarity scoring (instructor vs. student IMU window) ---
     # If False, the instructor-matching similarity score is skipped entirely

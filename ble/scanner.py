@@ -1,3 +1,27 @@
+"""
+BLE device scanner for Pebble pods and LED displays.
+
+Uses the bleak library to discover nearby BLE devices and returns only those
+whose advertising names match the Pebble naming convention ("Pebble_*" for
+IMU pods, "PebbleLED_*" for LED displays).
+
+How it works:
+    1. BleakScanner.discover() runs a passive BLE scan for timeout seconds.
+    2. The returned list is filtered by advertising name prefix.
+    3. Only matching BLEDevice objects are returned.
+
+Also supports saving/loading discovered devices to a JSON cache file, so
+the system can reconnect to known devices without a full scan.
+
+Dependencies:
+    - bleak : Cross-platform async BLE library.
+    - json  : For device cache serialization.
+
+How it fits into Pebble:
+    FlowerGame.main calls scan_for_pebbles() at startup to discover all sensor
+    pods, then creates one PebbleClient per discovered device.
+"""
+
 import json
 import os
 from pathlib import Path

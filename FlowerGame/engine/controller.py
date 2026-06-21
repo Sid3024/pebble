@@ -1,3 +1,48 @@
+"""
+Single-team (cooperative) FlowerController for the FlowerGame.
+
+This is the core game engine for the single/cooperative mode.  An instructor
+pod is selected first (by shaking); then all other pods become students whose
+movements are compared against the instructor via the similarity engine.
+
+Key classes:
+    DeviceState      : Dataclass tracking a pod's phase, gravity, similarity.
+    FlowerController : Top-level controller that manages the instructor,
+                       computes similarity scores for students, accumulates
+                       a shared score, manages the countdown timer, triggers
+                       vibration milestones, and broadcasts state via WebSocket.
+
+Similarity scoring flow:
+    1. Instructor shakes a pod -> selected via motion threshold.
+    2. Facilitator confirms -> phase becomes "playing", timer starts.
+    3. First 3 seconds: warmup (gravity EMA stabilises, no scoring).
+    4. Each student window is compared axis-by-axis (ax, ay, az) against the
+       instructor's recent windows (phase-compensated).
+    5. Score = growth_per_window * (similarity ^ exponent).
+
+Milestone vibration system:
+    - Time-based (50% and 75% of game duration elapsed).
+    - Score-based (every 50 flowers).
+    - Last-10-seconds warning.
+    Each triggers a vibration pattern sent to all connected pods.
+
+Plant computation:
+    Score / sprout_points_per_plant = number of flowers.  Dashboard renders
+    the garden from this list.
+
+Dependencies:
+    - ble.imu       : ImuWindow dataclass.
+    - ble.constants : Vibration pattern IDs (VIBR_*).
+    - .similarity   : compute_similarity, best_similarity, merge_windows.
+    - .motion       : selection_motion_score for instructor selection.
+
+How it fits into Pebble:
+    FlowerWSServer creates a FlowerController when the dashboard sends
+    {"action":"start","mode":"single"}.  process_imu_window() is called
+    from BLE notification callbacks.  get_state() is called every
+    broadcast_interval_s to push game state to the dashboard.
+"""
+
 from __future__ import annotations
 
 import time
@@ -9,7 +54,7 @@ from ble.imu import ImuWindow
 
 from ..config.config import FlowerConfig
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, best_similarity, fallback_score, merge_windows, update_gravity_estimate
+from .similarity import SimilarityResult, best_similarity, fallback_score, gravity_from_roll_pitch, merge_windows, update_gravity_estimate
 
 # Each pod's sampling window starts independently when it connects, so the
 # instructor's and student's windows aren't phase-aligned. Keep this many of
@@ -177,10 +222,13 @@ class FlowerController:
               "Press Next to start the game.")
 
     def confirm_instructor(self) -> None:
-        if self.phase == "instructor_select" and self._instructor is not None:
+        if self.phase == "instructor_select":
             self._start_time = time.monotonic()
             self.phase = "playing"
-            print("[GARDEN] Instructor confirmed. Game started.")
+            if self._instructor:
+                print("[GARDEN] Instructor confirmed. Game started.")
+            else:
+                print("[GARDEN] No instructor selected — game started without instructor.")
 
     def _handle_playing(self, device_name: str, window: ImuWindow) -> None:
         if self.time_remaining <= 0:
@@ -195,9 +243,12 @@ class FlowerController:
             state = self._devices[device_name]
             state.phase = "instructor"
             state.ready = True
-            # Gravity EMA updates on every raw window regardless of accumulation
+            # Track gravity DIRECTION from roll/pitch (not from ax/ay/az, which
+            # are already gravity-removed by firmware). This tells us which way
+            # "down" is for this pod, used for vertical/horizontal decomposition.
+            gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
             state.gravity = update_gravity_estimate(
-                state.gravity, (window.ax, window.ay, window.az),
+                state.gravity, gravity_dir,
                 self._config.similarity_gravity_ema_alpha, state.gravity_initialized)
             state.gravity_initialized = True
             self._reference = window
@@ -205,6 +256,17 @@ class FlowerController:
             if len(self._instructor_accum) >= n:
                 self._reference_history.append(merge_windows(self._instructor_accum))
                 self._instructor_accum = []
+            return
+
+        # 3-second warmup: let gravity EMA stabilise before scoring begins.
+        # Accumulation is intentionally skipped so the first scored window is fresh.
+        if time.monotonic() - self._start_time < 3.0:
+            student_state = self._devices[device_name]
+            gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
+            student_state.gravity = update_gravity_estimate(
+                student_state.gravity, gravity_dir,
+                self._config.similarity_gravity_ema_alpha, student_state.gravity_initialized)
+            student_state.gravity_initialized = True
             return
 
         if not self._config.similarity_enabled:
@@ -217,9 +279,9 @@ class FlowerController:
             return
 
         student_state = self._devices[device_name]
-        # Gravity EMA updates on every raw window regardless of accumulation
+        gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
         student_state.gravity = update_gravity_estimate(
-            student_state.gravity, (window.ax, window.ay, window.az),
+            student_state.gravity, gravity_dir,
             self._config.similarity_gravity_ema_alpha, student_state.gravity_initialized)
         student_state.gravity_initialized = True
 

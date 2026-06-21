@@ -1,3 +1,14 @@
+/*
+ * ble.h — BLE GATT Server Interface for Pebble Pods
+ *
+ * Defines the BLE service layout:
+ *   - One service with two characteristics:
+ *     1. WINDOW_CHAR (notify): Pod sends 20-byte IMU windows to the host.
+ *     2. COMMAND_CHAR (write): Host sends 1-byte vibration pattern IDs to the pod.
+ *   - Device name = "Pebble_" + last 3 bytes of MAC address (unique per pod).
+ *   - Auto-restarts advertising on disconnect.
+ */
+
 #pragma once
 #include <Arduino.h>
 

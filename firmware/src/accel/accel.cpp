@@ -1,3 +1,16 @@
+/*
+ * accel.cpp — MPU6050 / MPU6500 IMU Driver Implementation
+ *
+ * Initialises the IMU over I2C, configures sample rate and resolution,
+ * and provides a read function returning 6-axis data (accel + gyro) plus
+ * roll/pitch angles. Also includes imu_diagnose() for debugging (full
+ * I2C bus scan + WHO_AM_I probe).
+ *
+ * Supports two chip families:
+ *   - MPU6050 (WHO_AM_I=0x68): Adafruit MPU6050 library
+ *   - MPU6500/9250 (WHO_AM_I=0x70/71/73/98): Raw register driver
+ */
+
 #include "accel.h"
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>

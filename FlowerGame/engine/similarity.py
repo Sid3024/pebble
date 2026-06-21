@@ -1,5 +1,58 @@
+"""
+Similarity scoring engine — compares instructor vs student IMU movement.
+
+This is the core algorithm that makes the flower game work: it takes one
+instructor IMU window and one student IMU window and produces a 0-to-1
+similarity score based on how well the student's movement matches the
+instructor's movement.
+
+Orientation-independent design:
+    Pods can be held at any angle. The algorithm decomposes each pod's
+    movement into vertical (along gravity) and horizontal (perpendicular)
+    components using each pod's gravity direction (reconstructed from
+    roll/pitch). This way, "up" means the same thing for both pods
+    regardless of how they're tilted.
+
+    - Vertical direction (up vs down) is compared for both direction
+      and magnitude — this is the only axis we can reliably compare.
+    - Horizontal magnitude is compared (intensity match), but direction
+      is NOT compared because we don't know which way the pod is facing
+      horizontally (no magnetometer / no yaw information).
+
+Algorithm overview:
+    1. Use ax, ay, az directly as movement (gravity already removed by
+       firmware). Use gravity direction (from roll/pitch EMA) to define
+       which way is "down" for each pod.
+    2. Project movement onto gravity axis → vertical component (signed).
+       Remainder → horizontal component (magnitude only).
+    3. Check minimum total movement. If either pod is too still → score 0.
+    4. Compare vertical direction (same or opposite).
+    5. Compute magnitude ratios for vertical and horizontal separately,
+       weighted by how much of the movement is vertical vs horizontal.
+    6. If vertical matches: score = 0.9 + 0.1 * magnitude (90-100%).
+       If vertical is opposite: score capped below 50%, penalty scaled
+       by how vertical the movement is.
+
+Phase compensation (best_similarity):
+    Pods start their 250ms windows independently, so best_similarity()
+    compares against the last N instructor windows and picks the best.
+
+Key functions:
+    compute_similarity()           : Core scoring with orientation alignment
+    best_similarity()              : Phase-compensated wrapper
+    gravity_from_roll_pitch()      : Reconstruct gravity direction from angles
+    update_gravity_estimate()      : EMA tracker (used for gravity direction)
+    merge_windows()                : Average N ImuWindows into one
+    fallback_score()               : Activity-only scoring when similarity off
+
+Dependencies:
+    - ble.imu : ImuWindow dataclass.
+    - math    : sqrt, sin, cos, radians for vector math.
+"""
+
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -8,9 +61,49 @@ from ble.imu import ImuWindow
 
 @dataclass(frozen=True)
 class SimilarityResult:
+    """Result of comparing one instructor window to one student window.
+    score: 0.0 (no match) to 1.0 (perfect match).
+    direction_score: 1.0 if vertical matches, lower if opposite (weighted).
+    magnitude_score: weighted average of vertical and horizontal magnitude ratios."""
     score: float
     direction_score: float
     magnitude_score: float
+
+
+# ── Vector math helpers ──────────────────────────────────────────
+
+def _vec_mag(v: tuple[float, float, float]) -> float:
+    return math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+
+
+def _vec_normalize(v: tuple[float, float, float]) -> tuple[float, float, float]:
+    m = _vec_mag(v)
+    if m < 1e-9:
+        return (0.0, 0.0, 1.0)
+    return (v[0] / m, v[1] / m, v[2] / m)
+
+
+def _vec_dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def gravity_from_roll_pitch(roll_deg: float, pitch_deg: float) -> tuple[float, float, float]:
+    """Reconstruct a unit gravity direction vector from roll and pitch angles.
+
+    Uses the standard IMU convention where:
+        roll  = atan2(ay, az)              — tilt left/right
+        pitch = atan2(-ax, sqrt(ay²+az²))  — tilt forward/backward
+
+    Returns a unit vector pointing in the direction of gravity in the
+    pod's local coordinate frame. This tells us which way "down" is
+    for this pod, regardless of how it's held.
+    """
+    r = math.radians(roll_deg)
+    p = math.radians(pitch_deg)
+    gx = -math.sin(p)
+    gy = math.sin(r) * math.cos(p)
+    gz = math.cos(r) * math.cos(p)
+    return (gx, gy, gz)
 
 
 def merge_windows(windows: list[ImuWindow]) -> ImuWindow:
@@ -82,60 +175,100 @@ def compute_similarity(
     student_gravity: tuple[float, float, float] = (0.0, 0.0, 1.0),
     direction_penalty_exponent: float = 4.0,
 ) -> SimilarityResult:
-    """Compare instructor vs. student movement, axis by axis (ax, ay, az).
+    """Compare instructor vs student movement using orientation-independent
+    vertical/horizontal decomposition.
 
-    Gravity is removed per-axis using each pod's own (EMA-tracked) gravity
-    vector, so resting acceleration doesn't count as "movement".
+    ax, ay, az are already gravity-removed by the firmware, so they represent
+    pure movement. instructor_gravity and student_gravity are gravity direction
+    vectors (from roll/pitch EMA) telling us which way "down" is for each pod.
 
-    Rules:
-      - If ANY axis (x, y or z) is below min_movement_accel for EITHER the
-        instructor or the student, the match is 0 - not enough real motion
-        to judge.
-      - If ANY axis moves in OPPOSITE directions between instructor and
-        student, the match is capped below 0.5 - it should clearly reflect
-        a mismatch.
-      - If ALL THREE axes move in the SAME direction, the match is at least
-        0.9 - direction match is rewarded generously regardless of exact
-        intensity.
+    The movement is decomposed into:
+      - Vertical (along gravity): signed scalar — can compare direction.
+      - Horizontal (perpendicular to gravity): magnitude only — can't compare
+        direction without a magnetometer, so only intensity is compared.
     """
-    instructor_accel = (
-        instructor.ax - instructor_gravity[0],
-        instructor.ay - instructor_gravity[1],
-        instructor.az - instructor_gravity[2],
-    )
-    student_accel = (
-        student.ax - student_gravity[0],
-        student.ay - student_gravity[1],
-        student.az - student_gravity[2],
-    )
+    # Movement vectors (already gravity-removed by firmware)
+    i_move = (instructor.ax, instructor.ay, instructor.az)
+    s_move = (student.ax, student.ay, student.az)
 
-    for ia, sa in zip(instructor_accel, student_accel):
-        if abs(ia) < min_movement_accel or abs(sa) < min_movement_accel:
-            return SimilarityResult(score=0.0, direction_score=0.0, magnitude_score=0.0)
+    # Total movement — if either pod is too still, can't compare
+    i_mag = _vec_mag(i_move)
+    s_mag = _vec_mag(s_move)
 
-    same_direction_count = 0
-    magnitude_ratios = []
-    for ia, sa in zip(instructor_accel, student_accel):
-        if ia * sa >= 0:
-            same_direction_count += 1
-        magnitude_ratios.append(min(abs(ia), abs(sa)) / max(abs(ia), abs(sa)))
+    # DEBUG: print every comparison so we can see what values flow through
+    print(f"[SIMILARITY DEBUG] instructor=({instructor.ax:.4f},{instructor.ay:.4f},{instructor.az:.4f}) mag={i_mag:.4f} "
+          f"student=({student.ax:.4f},{student.ay:.4f},{student.az:.4f}) mag={s_mag:.4f} "
+          f"gravity_i={instructor_gravity} gravity_s={student_gravity}")
 
-    direction_score = same_direction_count / 3.0
-    magnitude_score = sum(r ** (1.0 / direction_penalty_exponent) for r in magnitude_ratios) / 3.0
+    if i_mag < min_movement_accel or s_mag < min_movement_accel:
+        print(f"[SIMILARITY DEBUG] REJECTED: below threshold {min_movement_accel}")
+        return SimilarityResult(score=0.0, direction_score=0.0, magnitude_score=0.0)
 
-    if same_direction_count == 3:
-        # All axes match direction -> high score (90%-100%), leniency on
-        # magnitude only affects how close to 100% it gets.
+    # "Down" direction for each pod (from roll/pitch-derived gravity EMA)
+    i_down = _vec_normalize(instructor_gravity)
+    s_down = _vec_normalize(student_gravity)
+
+    # Vertical component: projection of movement onto gravity direction.
+    # Positive = moving downward (with gravity), negative = moving upward.
+    i_vert = _vec_dot(i_move, i_down)
+    s_vert = _vec_dot(s_move, s_down)
+
+    # Horizontal component: everything perpendicular to gravity.
+    # Pythagorean: horiz² = total² - vert²
+    i_horiz = math.sqrt(max(0.0, i_mag ** 2 - i_vert ** 2))
+    s_horiz = math.sqrt(max(0.0, s_mag ** 2 - s_vert ** 2))
+
+    # ── Direction check (vertical only) ──────────────────────────
+    # Vertical is the ONLY axis where we can compare direction, because
+    # gravity alignment gives both pods the same "up/down" reference.
+    vert_same = (i_vert * s_vert >= 0)
+    vert_significant = (abs(i_vert) > min_movement_accel * 0.5 and
+                        abs(s_vert) > min_movement_accel * 0.5)
+
+    # ── Magnitude ratios ─────────────────────────────────────────
+    exp = 1.0 / direction_penalty_exponent
+
+    # Vertical ratio (handle near-zero cases)
+    if abs(i_vert) < 1e-9 and abs(s_vert) < 1e-9:
+        vert_ratio = 1.0
+    elif abs(i_vert) < 1e-9 or abs(s_vert) < 1e-9:
+        vert_ratio = 0.0
+    else:
+        vert_ratio = (min(abs(i_vert), abs(s_vert)) / max(abs(i_vert), abs(s_vert))) ** exp
+
+    # Horizontal ratio
+    if i_horiz < 1e-9 and s_horiz < 1e-9:
+        horiz_ratio = 1.0
+    elif i_horiz < 1e-9 or s_horiz < 1e-9:
+        horiz_ratio = 0.0
+    else:
+        horiz_ratio = (min(i_horiz, s_horiz) / max(i_horiz, s_horiz)) ** exp
+
+    # Weight by how much of the movement is vertical vs horizontal.
+    # If mostly vertical → vertical comparison dominates the score.
+    # If mostly horizontal → horizontal magnitude dominates.
+    total_component = abs(i_vert) + abs(s_vert) + i_horiz + s_horiz + 1e-9
+    vert_weight = (abs(i_vert) + abs(s_vert)) / total_component
+
+    magnitude_score = vert_weight * vert_ratio + (1.0 - vert_weight) * horiz_ratio
+
+    # ── Final score ──────────────────────────────────────────────
+    if vert_same or not vert_significant:
+        # Vertical matches, or not enough vertical movement to judge
+        direction_score = 1.0
         score = 0.9 + 0.1 * magnitude_score
     else:
-        # At least one axis is moving the opposite way -> always below 50%,
-        # and the more axes disagree, the lower the score.
-        score = 0.5 * magnitude_score * direction_score
+        # Vertical directions are clearly opposite — penalty scaled by
+        # how much of the movement was vertical. Purely horizontal
+        # movement with a tiny wrong-direction vertical blip gets a
+        # mild penalty; purely vertical opposite movement is harsh.
+        direction_score = 1.0 - vert_weight
+        score = 0.5 * direction_score * magnitude_score
 
     return SimilarityResult(
         score=max(0.0, min(1.0, score)),
-        direction_score=direction_score,
-        magnitude_score=magnitude_score,
+        direction_score=round(direction_score, 3),
+        magnitude_score=round(magnitude_score, 3),
     )
 
 

@@ -1,3 +1,11 @@
+/*
+ * accel.h — IMU Driver Interface
+ *
+ * Thin wrapper around the MPU6050 (via Adafruit library) and MPU6500-family
+ * (via raw I2C registers). Provides init, read, and diagnostic functions.
+ * Supports auto-detection of chip type via WHO_AM_I register.
+ */
+
 #pragma once
 #include <Arduino.h>
 #include "config/board_config.h"

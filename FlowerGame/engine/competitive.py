@@ -1,3 +1,49 @@
+"""
+Two-team competitive FlowerController for the FlowerGame.
+
+This module implements the competitive game mode where players split into two
+teams and race to grow more flowers before the countdown timer expires.
+
+Key classes:
+    TeamState                    : Holds one team's score, per-device state,
+                                   similarity tracking, and plant computation.
+    CompetitiveFlowerController  : Top-level controller managing the full game
+                                   lifecycle: instructor_select -> team_select
+                                   -> playing -> won.
+
+Phase flow (competitive mode):
+    waiting
+      -> instructor_select  -- one pod shakes to become the instructor
+      -> team_select step 0 -- pods shake to join Team 1
+      -> team_select step 1 -- pods shake to join Team 2 (via next_team())
+      -> playing            -- timer starts (via begin_game())
+      -> won                -- timer expires; highest-scoring team wins
+
+Similarity scoring:
+    Same axis-by-axis comparison as single mode (see similarity.py), but each
+    team accumulates score independently via its own TeamState.
+
+Late-joiner handling:
+    Pods that connect during "playing" are auto-assigned to the smaller team.
+
+Winner determination:
+    Higher score wins.  Ties result in winner=None.
+
+Button Points:
+    The facilitator can manually add points to either team via keyboard keys
+    (1-4 for Team 1, q-w-e-r for Team 2) when button_points is enabled.
+
+Dependencies:
+    - .controller  : DeviceState, _REFERENCE_HISTORY, _TIME_MILESTONES.
+    - .similarity  : best_similarity, merge_windows, update_gravity_estimate.
+    - .motion      : selection_motion_score for instructor/team selection.
+    - ble.constants: VIBR_TEAM1/2, VIBR_WIN, VIBR_FLOWER_50, VIBR_LAST_10.
+
+How it fits into Pebble:
+    FlowerWSServer creates a CompetitiveFlowerController when the dashboard
+    sends {"action":"start","mode":"competitive"}.
+"""
+
 from __future__ import annotations
 
 import math
@@ -11,7 +57,7 @@ from ble.imu import ImuWindow
 from ..config.config import FlowerConfig
 from .controller import DeviceState, _REFERENCE_HISTORY, _TIME_MILESTONES
 from .motion import selection_motion_score
-from .similarity import SimilarityResult, best_similarity, fallback_score, merge_windows, update_gravity_estimate
+from .similarity import SimilarityResult, best_similarity, fallback_score, gravity_from_roll_pitch, merge_windows, update_gravity_estimate
 
 
 class TeamState:
@@ -25,8 +71,9 @@ class TeamState:
 
     def update_gravity(self, device_name: str, window: ImuWindow, alpha: float) -> tuple[float, float, float]:
         state = self._devices.setdefault(device_name, DeviceState())
+        gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
         state.gravity = update_gravity_estimate(
-            state.gravity, (window.ax, window.ay, window.az), alpha, state.gravity_initialized)
+            state.gravity, gravity_dir, alpha, state.gravity_initialized)
         state.gravity_initialized = True
         return state.gravity
 
@@ -270,9 +317,12 @@ class CompetitiveFlowerController:
               "Press Next to start team selection.")
 
     def confirm_instructor(self) -> None:
-        if self.phase == "instructor_select" and self._instructor is not None:
+        if self.phase == "instructor_select":
             self.phase = "team_select"
-            print("[GARDEN] Instructor confirmed. Team selection started.")
+            if self._instructor:
+                print("[GARDEN] Instructor confirmed. Team selection started.")
+            else:
+                print("[GARDEN] No instructor selected — skipping to team selection.")
 
     def _handle_select(self, device_name: str, window: ImuWindow) -> None:
         motion = selection_motion_score(window)
@@ -309,15 +359,22 @@ class CompetitiveFlowerController:
 
         if device_name == self._instructor:
             self._reference = window
-            # Gravity EMA updates on every raw window regardless of accumulation
+            gravity_dir = gravity_from_roll_pitch(window.roll, window.pitch)
             self._instructor_gravity = update_gravity_estimate(
-                self._instructor_gravity, (window.ax, window.ay, window.az),
+                self._instructor_gravity, gravity_dir,
                 self._config.similarity_gravity_ema_alpha, self._instructor_gravity_initialized)
             self._instructor_gravity_initialized = True
             self._instructor_accum.append(window)
             if len(self._instructor_accum) >= n:
                 self._reference_history.append(merge_windows(self._instructor_accum))
                 self._instructor_accum = []
+            return
+
+        # 3-second warmup: let gravity EMA stabilise before scoring begins.
+        # Accumulation is intentionally skipped so the first scored window is fresh.
+        if time.monotonic() - self._start_time < 3.0:
+            student_gravity = self._teams[self._assign_team(device_name)].update_gravity(
+                device_name, window, self._config.similarity_gravity_ema_alpha)
             return
 
         team_idx = self._assign_team(device_name)
@@ -350,6 +407,12 @@ class CompetitiveFlowerController:
             for dev, team in self._assignment.items():
                 if team == team_idx:
                     self._pending_vibrations.setdefault(dev, []).append(VIBR_FLOWER_50)
+
+    def add_score(self, team_idx: int, amount: int) -> None:
+        if self.phase != "playing" or team_idx not in (0, 1):
+            return
+        self._teams[team_idx]._score += amount
+        print(f"[GARDEN] Button Points: Team {team_idx + 1} +{amount} -> {self._teams[team_idx]._score:.1f}")
 
     def _end_game(self) -> None:
         self.phase = "won"
